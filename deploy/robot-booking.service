@@ -11,7 +11,7 @@
 
 [Unit]
 Description=Robot Resource Booking System
-Documentation=file:/home/taki/development/ic_robot_booking_system/README.md
+Documentation=file:__BOOKING_APP_DIR__/README.md
 After=network-online.target
 Wants=network-online.target
 # Never stop trying to restart, however often it crashes.
@@ -19,12 +19,12 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=taki
-Group=taki
-WorkingDirectory=/home/taki/development/ic_robot_booking_system
-EnvironmentFile=/home/taki/development/ic_robot_booking_system/deploy/booking.env
+User=__BOOKING_USER__
+Group=__BOOKING_GROUP__
+WorkingDirectory=__BOOKING_APP_DIR__
+EnvironmentFile=__BOOKING_APP_DIR__/deploy/booking.env
 
-ExecStart=/home/taki/development/ic_robot_booking_system/.venv/bin/uvicorn app.main:app \
+ExecStart=__BOOKING_APP_DIR__/.venv/bin/uvicorn app.main:app \
           --host ${BOOKING_HOST} --port ${BOOKING_PORT}
 
 # Always come back: on crash, on clean exit, on OOM kill.
@@ -42,7 +42,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/taki/development/ic_robot_booking_system/data
+ReadWritePaths=__BOOKING_APP_DIR__/data
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true

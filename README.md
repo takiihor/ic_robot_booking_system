@@ -27,8 +27,8 @@ python3 -m venv .venv
 `start.sh` prints every URL the server is reachable on and waits until the app actually
 answers before returning. The database is created automatically at `data/booking.db`.
 
-Host and port live in **`deploy/booking.env`** — the one place to change them. They are
-read by `start.sh`, `stop.sh` and the systemd unit alike. The default port is **8757**,
+Host, port and database path live in **`deploy/booking.env`** — the one place to change
+them. They are read by `start.sh`, `stop.sh` and the systemd unit alike. The default port is **8757**,
 chosen because it is uncommon enough that development tooling will not squat on it.
 Override for a single run with `BOOKING_PORT=9000 ./start.sh`.
 
@@ -38,8 +38,7 @@ Override for a single run with `BOOKING_PORT=9000 ./start.sh`.
 reboot, install the systemd unit:
 
 ```bash
-sudo cp deploy/robot-booking.service /etc/systemd/system/
-sudo systemctl daemon-reload
+sudo ./deploy/install-systemd-service.sh
 sudo systemctl enable --now robot-booking
 
 systemctl status robot-booking
@@ -55,6 +54,8 @@ systemctl`, which may prompt for a password). `./stop.sh` stops the service unti
 reboot; to keep it down permanently use `sudo systemctl disable robot-booking`.
 
 After editing `deploy/booking.env`, apply it with `sudo systemctl restart robot-booking`.
+If the checkout moves or a different Linux user should run the service, re-run the installer;
+it renders those values into `/etc/systemd/system/robot-booking.service`.
 
 ## Deployment (Docker)
 
