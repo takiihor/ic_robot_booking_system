@@ -1,0 +1,21 @@
+{% macro status_badge(status) -%}
+  <span class="badge badge-{{ status }}">{{ status }}</span>
+{%- endmacro %}
+
+{% macro resource_badge(status) -%}
+  {% if status == 'Active' %}<span class="badge badge-Active">Active</span>
+  {% elif status == 'Retired' %}<span class="badge badge-Retired">Retired</span>
+  {% else %}<span class="badge badge-out">{{ status }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro field(name, label, value='', type='text', flagged=false, note='', attrs='') -%}
+  <div class="field {{ 'flagged' if flagged }}">
+    <label for="f-{{ name }}">{{ label }}</label>
+    <input type="{{ type }}" id="f-{{ name }}" name="{{ name }}" value="{{ value or '' }}" {{ attrs|safe }}>
+    {% if note %}<div class="field-note">{{ note }}</div>{% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro dt(value, fmt='%Y-%m-%d %H:%M') -%}
+  {{ value.strftime(fmt) if value else '—' }}
+{%- endmacro %}

@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Lesson Schedule{% endblock %}
+{% block content %}
+
+<h1>Lesson Schedule</h1>
+<p class="subtitle">
+  Paste the timetable, correct the parsed rows, choose the affected robots, then import.
+  Lessons block robot time exactly like a booking.
+</p>
+
+<div class="panel">
+  <form method="post" action="/lessons/parse">
+    <div class="field">
+      <label for="raw_text">Lesson timetable</label>
+      <textarea class="paste" id="raw_text" name="raw_text" rows="{{ 7 if parsed else 12 }}"
+                placeholder="Paste lesson timetable here&#10;&#10;e.g.  2026-09-01   ME3101   09:30-12:20   Room FG601">{{ raw_text }}</textarea>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" type="submit">Parse Timetable</button>
+      {% if parsed %}<a class="btn" href="/lessons">Start over</a>{% endif %}
+    </div>
+  </form>
+</div>
+
+{% if parsed %}
+  {% if warnings %}
+    <div class="msg msg-warn">
+      <strong>Check these rows:</strong>
+      <ul>{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  {% if conflicts %}
+    <div class="msg msg-err">
+      <strong>These lessons clash with existing reservations.</strong>
+      Correct the rows or the robot selection, or confirm below to import anyway.
+      Nothing is overwritten — both entries will appear on the calendar.
+      <ul>{% for conflict in conflicts %}<li>{{ conflict.label }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  <form method="post" action="/lessons/import">
+    <input type="hidden" name="raw_text" value="{{ raw_text }}">
+
+    <div class="panel" style="padding: 0; overflow: hidden;">
+      <div class="panel-head" style="padding: 14px 16px 0; margin: 0;">
+        <h2>Parsed lessons</h2>
+        <span class="muted">Untick a row to leave it out of the import.</span>
+      </div>
+      {% if rows %}
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th style="width: 40px;">Use</th><th>Course / module</th><th style="width: 150px;">Date</th>
+                <th style="width: 110px;">Start</th><th style="width: 110px;">End</th>
+                <th>Location</th><th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+                <tr>
+                  <td><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked></td>
+                  <td>
+                    <input type="text" name="course" value="{{ row.course }}"
+                           class="{{ 'flagged' if not row.course }}">
+                    {% if row.warnings %}
+                      <div class="field-note">{{ row.warnings|join(' · ') }}</div>
+                    {% endif %}
+                  </td>
+                  <td><input type="date" name="date" value="{{ row.date }}"></td>
+                  <td><input type="time" name="start_time" value="{{ row.start_time }}"></td>
+                  <td><input type="time" name="end_time" value="{{ row.end_time }}"></td>
+                  <td><input type="text" name="location" value="{{ row.location }}"></td>
+                  <td><input type="text" name="notes" value="{{ row.notes }}"></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty">No rows recognised. Adjust the pasted text and parse again.</div>
+      {% endif %}
+    </div>
+
+    {% if rows %}
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Affected robots</h2>
+          <button class="btn btn-sm" type="button" onclick="selectAllRobots()">Select all active robots</button>
+        </div>
+        {% if resources %}
+          <div class="checks">
+            {% for resource in resources %}
+              <label class="check">
+                <input type="checkbox" class="robot-check" name="resource_ids" value="{{ resource.id }}"
+                       {{ 'checked' if resource.id in selected_ids }}>
+                {{ resource.name }}
+              </label>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="muted">No active resources. <a href="/resources">Add a robot</a> first.</p>
+        {% endif %}
+      </div>
+
+      <div class="panel">
+        {% if conflicts %}
+          <label class="check" style="margin-bottom: 12px;">
+            <input type="checkbox" name="confirm_conflicts" value="1" required>
+            I have reviewed the conflicts above and want to import anyway.
+          </label>
+        {% endif %}
+        <div class="actions" style="margin: 0;">
+          <button class="btn btn-primary" type="submit">Import lessons</button>
+          <a class="btn" href="/lessons">Cancel</a>
+        </div>
+      </div>
+    {% endif %}
+  </form>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function selectAllRobots() {
+    document.querySelectorAll('.robot-check').forEach((box) => { box.checked = true; });
+  }
+</script>
+{% endblock %}

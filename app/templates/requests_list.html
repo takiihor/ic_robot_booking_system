@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge, dt %}
+{% block title %}Requests{% endblock %}
+{% block content %}
+
+<div class="panel-head">
+  <div><h1>Booking Requests</h1><p class="subtitle" style="margin:0">{{ requests|length }} matching</p></div>
+  <a class="btn btn-primary" href="/requests/new">+ New Request</a>
+</div>
+
+<form class="panel cal-toolbar" method="get" action="/requests">
+  <div class="field" style="min-width: 230px; flex: 1;">
+    <label for="q">Applicant / SID / Request ID</label>
+    <input type="search" id="q" name="q" value="{{ q }}" placeholder="e.g. DING or 25104512r">
+  </div>
+  <div class="field" style="width: 160px;">
+    <label for="from">From</label>
+    <input type="date" id="from" name="from" value="{{ date_from }}">
+  </div>
+  <div class="field" style="width: 160px;">
+    <label for="to">To</label>
+    <input type="date" id="to" name="to" value="{{ date_to }}">
+  </div>
+  <div class="field">
+    <label>Status</label>
+    <div class="checks" style="padding-top: 5px;">
+      {% for status in REQUEST_STATUSES %}
+        <label class="check">
+          <input type="checkbox" name="status" value="{{ status }}" {{ 'checked' if status in statuses }}>
+          {{ status|capitalize }}
+        </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="actions" style="margin:0">
+    <button class="btn btn-primary" type="submit">Filter</button>
+    <a class="btn" href="/requests">Reset</a>
+  </div>
+</form>
+
+<div class="panel" style="padding: 0; overflow: hidden;">
+  {% if requests %}
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>ID</th><th>Applicant</th><th>SID / NetID</th><th>Department</th>
+            <th>Start</th><th>End</th><th>Sessions</th><th>Robot</th><th>Status</th><th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for req in requests %}
+            <tr class="clickable" onclick="location.href='/requests/{{ req.id }}'">
+              <td class="mono">#{{ req.id }}</td>
+              <td><strong>{{ req.applicant.name }}</strong></td>
+              <td class="mono">{{ req.applicant.sid_netid or '—' }}</td>
+              <td>{{ req.applicant.department or '—' }}</td>
+              <td class="nowrap">{{ req.start_date.strftime('%d %b %Y') }}</td>
+              <td class="nowrap">{{ req.end_date.strftime('%d %b %Y') }}</td>
+              <td>{{ req.sessions|join(' + ') }}</td>
+              <td>{{ (req.assigned_resource or req.preferred_resource).name if (req.assigned_resource or req.preferred_resource) else '—' }}</td>
+              <td>{{ status_badge(req.status) }}</td>
+              <td class="nowrap muted">{{ dt(req.updated_at, '%d %b %H:%M') }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty">No requests match these filters.</div>
+  {% endif %}
+</div>
+{% endblock %}

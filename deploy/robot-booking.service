@@ -1,0 +1,51 @@
+# Robot Resource Booking System — always-on service.
+#
+#   sudo cp deploy/robot-booking.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now robot-booking
+#   systemctl status robot-booking
+#   journalctl -u robot-booking -f
+#
+# Host and port come from deploy/booking.env — edit that file, then:
+#   sudo systemctl restart robot-booking
+
+[Unit]
+Description=Robot Resource Booking System
+Documentation=file:/home/taki/development/ic_robot_booking_system/README.md
+After=network-online.target
+Wants=network-online.target
+# Never stop trying to restart, however often it crashes.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=taki
+Group=taki
+WorkingDirectory=/home/taki/development/ic_robot_booking_system
+EnvironmentFile=/home/taki/development/ic_robot_booking_system/deploy/booking.env
+
+ExecStart=/home/taki/development/ic_robot_booking_system/.venv/bin/uvicorn app.main:app \
+          --host ${BOOKING_HOST} --port ${BOOKING_PORT}
+
+# Always come back: on crash, on clean exit, on OOM kill.
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=robot-booking
+
+# Basic hardening. The app only ever writes to its own data/ directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/taki/development/ic_robot_booking_system/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

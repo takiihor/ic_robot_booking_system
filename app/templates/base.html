@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Robot Booking{% endblock %} · Robot Resource Booking</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🤖</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">🤖 Robot Booking</a>
+  <nav class="nav">
+    <a href="/calendar" class="{{ 'active' if nav == 'calendar' }}">Calendar</a>
+    <a href="/requests/new" class="{{ 'active' if nav == 'new' }}">New Request</a>
+    <a href="/requests" class="{{ 'active' if nav == 'requests' }}">Requests</a>
+    <a href="/lessons" class="{{ 'active' if nav == 'lessons' }}">Lesson Schedule</a>
+    <a href="/resources" class="{{ 'active' if nav == 'resources' }}">Resources</a>
+  </nav>
+  <form class="quicksearch" action="/search" method="get" role="search">
+    <input type="search" name="q" placeholder="Search name / SID / NetID / request ID"
+           value="{{ q or '' }}" style="width: 260px;" aria-label="Search bookings">
+    <button class="btn btn-sm" type="submit">Search</button>
+  </form>
+</header>
+
+<main>
+  {% if flash %}
+    <div class="msg msg-{{ flash_level or 'ok' }}">{{ flash }}</div>
+  {% endif %}
+  {% if errors %}
+    <div class="msg msg-err">
+      <strong>Please fix the following:</strong>
+      <ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+
+{% block modal %}{% endblock %}
+{% block scripts %}{% endblock %}
+</body>
+</html>

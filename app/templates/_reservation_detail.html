@@ -1,0 +1,48 @@
+{% from "_macros.html" import status_badge, dt %}
+{% set req = reservation.booking_request %}
+
+{% if req %}
+  {# SPEC 8.4 — full booking detail #}
+  <dl class="kv">
+    <dt>Applicant</dt><dd>{{ req.applicant.name }}</dd>
+    <dt>SID / NetID</dt><dd>{{ req.applicant.sid_netid or '—' }}</dd>
+    <dt>Department</dt><dd>{{ req.applicant.department or '—' }}</dd>
+    <dt>Email</dt><dd>{{ req.applicant.email or '—' }}</dd>
+    <dt>Phone</dt><dd>{{ req.applicant.phone or '—' }}</dd>
+    <dt>Request ID</dt><dd>#{{ req.id }}{% if req.response_id %} · {{ req.response_id }}{% endif %}</dd>
+    <dt>Robot</dt><dd>{{ reservation.resource.name }}</dd>
+    <dt>Date / time</dt>
+    <dd>{{ reservation.start_at.strftime('%a %d %b %Y, %H:%M') }} – {{ reservation.end_at.strftime('%H:%M') }}</dd>
+    <dt>Booking period</dt>
+    <dd>{{ req.start_date.strftime('%d %b %Y') }} – {{ req.end_date.strftime('%d %b %Y') }} ({{ req.sessions|join(' + ') }})</dd>
+    <dt>Purpose</dt><dd>{{ req.purpose or '—' }}</dd>
+    <dt>Remarks</dt><dd>{{ req.remarks or '—' }}</dd>
+    <dt>Status</dt><dd>{{ status_badge(req.status) }}</dd>
+    <dt>Created</dt><dd>{{ dt(req.created_at) }}</dd>
+    <dt>Approved</dt><dd>{{ dt(req.decided_at) }}</dd>
+  </dl>
+  <div class="actions">
+    <a class="btn btn-primary btn-sm" href="/requests/{{ req.id }}">Open full request</a>
+    <a class="btn btn-sm" href="/applicants/{{ req.applicant_id }}">Applicant history</a>
+  </div>
+{% else %}
+  {# Lesson, maintenance or block #}
+  <dl class="kv">
+    <dt>{{ 'Course / module' if reservation.source_type == 'LESSON' else 'Title' }}</dt>
+    <dd>{{ reservation.title }}</dd>
+    <dt>Type</dt><dd>{{ reservation.type_label }}</dd>
+    <dt>Robot</dt><dd>{{ reservation.resource.name }}</dd>
+    <dt>Date / time</dt>
+    <dd>{{ reservation.start_at.strftime('%a %d %b %Y, %H:%M') }} – {{ reservation.end_at.strftime('%H:%M') }}</dd>
+    <dt>Notes</dt><dd>{{ reservation.details or '—' }}</dd>
+    <dt>Status</dt><dd>{{ reservation.status }}</dd>
+    <dt>Created</dt><dd>{{ dt(reservation.created_at) }}</dd>
+  </dl>
+  {% if reservation.status == 'ACTIVE' %}
+    <form class="actions" method="post" action="/reservations/{{ reservation.id }}/cancel"
+          onsubmit="return confirm('Cancel this {{ reservation.type_label }} entry? It stays in the history.')">
+      <input type="hidden" name="redirect_to" value="/calendar?date={{ reservation.start_at.date().isoformat() }}">
+      <button class="btn btn-danger btn-sm" type="submit">Cancel this entry</button>
+    </form>
+  {% endif %}
+{% endif %}

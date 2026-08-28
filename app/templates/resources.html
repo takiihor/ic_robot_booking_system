@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% from "_macros.html" import resource_badge, dt %}
+{% block title %}Resources{% endblock %}
+{% block content %}
+
+<div class="panel-head">
+  <div><h1>Resources</h1>
+    <p class="subtitle" style="margin:0">Robots and other bookable equipment.</p></div>
+  <button class="btn btn-primary" type="button" onclick="document.getElementById('add-panel').hidden = false">
+    + Add resource
+  </button>
+</div>
+
+<div class="panel" id="add-panel" {{ 'hidden' if resources }}>
+  <h2>Add a resource</h2>
+  <form method="post" action="/resources">
+    <div class="grid grid-3">
+      <div class="field">
+        <label for="new-name">Display name *</label>
+        <input type="text" id="new-name" name="name" placeholder="UR10e (03)" required>
+      </div>
+      <div class="field">
+        <label for="new-model">Model</label>
+        <input type="text" id="new-model" name="model" placeholder="UR10e">
+      </div>
+      <div class="field">
+        <label for="new-group">Resource group *</label>
+        <input type="text" id="new-group" name="resource_group" value="Collaborative Robots" required>
+      </div>
+      <div class="field">
+        <label for="new-location">Location</label>
+        <input type="text" id="new-location" name="location" placeholder="Industrial Robot Lab">
+      </div>
+      <div class="field">
+        <label for="new-status">Status</label>
+        <select id="new-status" name="status">
+          {% for status in RESOURCE_STATUSES %}<option value="{{ status }}">{{ status }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="new-remarks">Remarks</label>
+        <input type="text" id="new-remarks" name="remarks">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" type="submit">Add resource</button>
+      {% if resources %}
+        <button class="btn" type="button" onclick="document.getElementById('add-panel').hidden = true">Cancel</button>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+{% if resources %}
+  <p class="muted" style="margin-bottom: 10px;">
+    Alternatives are only suggested within the same resource group. Out-of-service resources are
+    never offered; for a temporary outage add a dated maintenance block on the calendar instead.
+  </p>
+  {% for resource in resources %}
+    <form class="panel" method="post" action="/resources/{{ resource.id }}/update">
+      <div class="panel-head">
+        <h2>{{ resource.name }} {{ resource_badge(resource.status) }}</h2>
+        <span class="muted">
+          {{ counts.get(resource.id, 0) }} active reservations · updated {{ dt(resource.updated_at, '%d %b %Y') }}
+        </span>
+      </div>
+      <div class="grid grid-3">
+        <div class="field">
+          <label for="name-{{ resource.id }}">Display name</label>
+          <input type="text" id="name-{{ resource.id }}" name="name" value="{{ resource.name }}" required>
+        </div>
+        <div class="field">
+          <label for="model-{{ resource.id }}">Model</label>
+          <input type="text" id="model-{{ resource.id }}" name="model" value="{{ resource.model or '' }}">
+        </div>
+        <div class="field">
+          <label for="group-{{ resource.id }}">Resource group</label>
+          <input type="text" id="group-{{ resource.id }}" name="resource_group" value="{{ resource.resource_group }}">
+        </div>
+        <div class="field">
+          <label for="loc-{{ resource.id }}">Location</label>
+          <input type="text" id="loc-{{ resource.id }}" name="location" value="{{ resource.location or '' }}">
+        </div>
+        <div class="field">
+          <label for="status-{{ resource.id }}">Status</label>
+          <select id="status-{{ resource.id }}" name="status">
+            {% for status in RESOURCE_STATUSES %}
+              <option value="{{ status }}" {{ 'selected' if status == resource.status }}>{{ status }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="remarks-{{ resource.id }}">Remarks</label>
+          <input type="text" id="remarks-{{ resource.id }}" name="remarks" value="{{ resource.remarks or '' }}">
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" type="submit">Save</button>
+        <a class="btn btn-sm" href="/calendar?resource_id={{ resource.id }}">View on calendar</a>
+      </div>
+    </form>
+  {% endfor %}
+{% endif %}
+{% endblock %}

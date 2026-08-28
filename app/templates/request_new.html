@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}New Request{% endblock %}
+{% block content %}
+
+<h1>New Booking Request</h1>
+<p class="subtitle">Paste the booking application email, parse it, then correct anything before saving.</p>
+
+<div class="panel">
+  <form method="post" action="/requests/parse">
+    <div class="field">
+      <label for="raw_text">Booking application email</label>
+      <textarea class="paste" id="raw_text" name="raw_text" rows="{{ 8 if parsed else 14 }}"
+                placeholder="Paste booking application email here">{{ form.raw_text }}</textarea>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" type="submit">Parse Request</button>
+      {% if parsed %}<a class="btn" href="/requests/new">Start over</a>{% endif %}
+    </div>
+  </form>
+</div>
+
+{% if parsed %}
+  {% if warnings %}
+    <div class="msg msg-warn">
+      <strong>Check these before saving:</strong>
+      <ul>{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+    </div>
+  {% elif flagged %}
+    <div class="msg msg-ok">
+      Every required field was parsed. The highlighted fields were not found in the email —
+      fill them in if they matter.
+    </div>
+  {% else %}
+    <div class="msg msg-ok">All fields were parsed. Review them and continue.</div>
+  {% endif %}
+
+  <form method="post" action="/requests">
+    <input type="hidden" name="raw_text" value="{{ form.raw_text }}">
+
+    <div class="panel">
+      <h2>Applicant</h2>
+      <div class="grid grid-3">
+        <div class="field {{ 'flagged' if 'name' in flagged }}">
+          <label for="name">Applicant name *</label>
+          <input type="text" id="name" name="name" value="{{ form.name }}" required>
+        </div>
+        <div class="field {{ 'flagged' if 'sid_netid' in flagged }}">
+          <label for="sid_netid">SID / NetID</label>
+          <input type="text" id="sid_netid" name="sid_netid" value="{{ form.sid_netid }}">
+        </div>
+        <div class="field {{ 'flagged' if 'department' in flagged }}">
+          <label for="department">Department</label>
+          <input type="text" id="department" name="department" value="{{ form.department }}">
+        </div>
+        <div class="field {{ 'flagged' if 'email' in flagged }}">
+          <label for="email">Email</label>
+          <input type="text" id="email" name="email" value="{{ form.email }}">
+        </div>
+        <div class="field {{ 'flagged' if 'phone' in flagged }}">
+          <label for="phone">Phone</label>
+          <input type="text" id="phone" name="phone" value="{{ form.phone }}">
+        </div>
+        <div class="field {{ 'flagged' if 'response_id' in flagged }}">
+          <label for="response_id">Response ID</label>
+          <input type="text" id="response_id" name="response_id" value="{{ form.response_id }}">
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Booking</h2>
+      <div class="grid grid-3">
+        <div class="field {{ 'flagged' if 'facility' in flagged }}">
+          <label for="facility">Facility</label>
+          <input type="text" id="facility" name="facility" value="{{ form.facility }}">
+        </div>
+        <div class="field {{ 'flagged' if 'booking_type' in flagged }}">
+          <label for="booking_type">Booking type</label>
+          <input type="text" id="booking_type" name="booking_type" value="{{ form.booking_type }}">
+        </div>
+        <div class="field {{ 'flagged' if 'preferred_robot' in flagged }}">
+          <label for="preferred_resource_id">Preferred robot</label>
+          <select id="preferred_resource_id" name="preferred_resource_id">
+            <option value="">— none selected —</option>
+            {% for resource in resources %}
+              <option value="{{ resource.id }}" {{ 'selected' if form.preferred_robot == resource.id|string }}>
+                {{ resource.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field {{ 'flagged' if 'start_date' in flagged }}">
+          <label for="start_date">Start date *</label>
+          <input type="date" id="start_date" name="start_date" value="{{ form.start_date }}" required>
+        </div>
+        <div class="field {{ 'flagged' if 'end_date' in flagged }}">
+          <label for="end_date">End date *</label>
+          <input type="date" id="end_date" name="end_date" value="{{ form.end_date }}" required>
+        </div>
+        <div class="field {{ 'flagged' if 'sessions' in flagged }}">
+          <label>Sessions *</label>
+          <div class="checks" style="padding-top: 5px;">
+            {% for session in SESSION_ORDER %}
+              <label class="check">
+                <input type="checkbox" name="sessions" value="{{ session }}"
+                       {{ 'checked' if session in form.sessions }}>
+                {{ SESSION_LABELS[session] }}
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <div class="grid grid-2">
+        <div class="field">
+          <label for="purpose">Booking purpose</label>
+          <textarea id="purpose" name="purpose" rows="3">{{ form.purpose }}</textarea>
+        </div>
+        <div class="field">
+          <label for="remarks">Remarks</label>
+          <textarea id="remarks" name="remarks" rows="3">{{ form.remarks }}</textarea>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" type="submit" name="action" value="check">Check Availability</button>
+        <button class="btn" type="submit" name="action" value="save">Save as Pending</button>
+        <a class="btn" href="/calendar">Cancel</a>
+      </div>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge %}
+{% block title %}{{ applicant.name }}{% endblock %}
+
+{% macro booking_table(title, rows) %}
+  <div class="panel">
+    <h2>{{ title }} ({{ rows|length }})</h2>
+    {% if rows %}
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>ID</th><th>Start</th><th>End</th><th>Sessions</th><th>Robot</th><th>Purpose</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for req in rows %}
+              <tr class="clickable" onclick="location.href='/requests/{{ req.id }}'">
+                <td class="mono">#{{ req.id }}</td>
+                <td class="nowrap">{{ req.start_date.strftime('%d %b %Y') }}</td>
+                <td class="nowrap">{{ req.end_date.strftime('%d %b %Y') }}</td>
+                <td>{{ req.sessions|join(' + ') }}</td>
+                <td>{{ (req.assigned_resource or req.preferred_resource).name if (req.assigned_resource or req.preferred_resource) else '—' }}</td>
+                <td>{{ req.purpose or '—' }}</td>
+                <td>{{ status_badge(req.status) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">None.</p>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{% block content %}
+<div class="panel-head">
+  <h1>{{ applicant.name }}</h1>
+  <a class="btn" href="/search?q={{ applicant.sid_netid or applicant.name }}">← Back to search</a>
+</div>
+
+<div class="panel">
+  <h2>Applicant</h2>
+  <dl class="kv">
+    <dt>Name</dt><dd>{{ applicant.name }}</dd>
+    <dt>SID / NetID</dt><dd>{{ applicant.sid_netid or '—' }}</dd>
+    <dt>Department</dt><dd>{{ applicant.department or '—' }}</dd>
+    <dt>Email</dt><dd>{{ applicant.email or '—' }}</dd>
+    <dt>Phone</dt><dd>{{ applicant.phone or '—' }}</dd>
+  </dl>
+</div>
+
+{{ booking_table('Current', current) }}
+{{ booking_table('Upcoming', upcoming) }}
+{{ booking_table('Historical', past) }}
+{% endblock %}

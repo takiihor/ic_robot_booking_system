@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge, dt %}
+{% block title %}Search{% endblock %}
+{% block content %}
+
+<h1>Search</h1>
+<p class="subtitle">Applicant name, SID, NetID, Response ID or request number.</p>
+
+<form class="panel" method="get" action="/search">
+  <div class="cal-toolbar" style="margin: 0;">
+    <div class="field" style="flex: 1; min-width: 240px; margin: 0;">
+      <label for="q">Search</label>
+      <input type="search" id="q" name="q" value="{{ q }}" placeholder="e.g. 25104512r" autofocus>
+    </div>
+    <div class="actions" style="margin: 0;"><button class="btn btn-primary" type="submit">Search</button></div>
+  </div>
+</form>
+
+{% if q %}
+  <div class="panel">
+    <h2>Applicants ({{ applicants|length }})</h2>
+    {% if applicants %}
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>Name</th><th>SID / NetID</th><th>Department</th><th>Email</th><th>Phone</th><th></th></tr></thead>
+          <tbody>
+            {% for applicant in applicants %}
+              <tr class="clickable" onclick="location.href='/applicants/{{ applicant.id }}'">
+                <td><strong>{{ applicant.name }}</strong></td>
+                <td class="mono">{{ applicant.sid_netid or '—' }}</td>
+                <td>{{ applicant.department or '—' }}</td>
+                <td>{{ applicant.email or '—' }}</td>
+                <td>{{ applicant.phone or '—' }}</td>
+                <td class="right"><a class="btn btn-sm" href="/applicants/{{ applicant.id }}">History</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No applicants matched.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Requests ({{ requests|length }})</h2>
+    {% if requests %}
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>ID</th><th>Applicant</th><th>Start</th><th>End</th><th>Robot</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for req in requests %}
+              <tr class="clickable" onclick="location.href='/requests/{{ req.id }}'">
+                <td class="mono">#{{ req.id }}</td>
+                <td>{{ req.applicant.name }}</td>
+                <td class="nowrap">{{ req.start_date.strftime('%d %b %Y') }}</td>
+                <td class="nowrap">{{ req.end_date.strftime('%d %b %Y') }}</td>
+                <td>{{ (req.assigned_resource or req.preferred_resource).name if (req.assigned_resource or req.preferred_resource) else '—' }}</td>
+                <td>{{ status_badge(req.status) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No requests matched.</p>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}

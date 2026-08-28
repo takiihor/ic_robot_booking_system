@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge, dt %}
+{% block title %}Request #{{ req.id }}{% endblock %}
+{% block content %}
+
+<div class="panel-head">
+  <div>
+    <h1>Request #{{ req.id }} — {{ req.applicant.name }} {{ status_badge(req.status) }}</h1>
+    <p class="subtitle" style="margin:0">
+      {{ req.start_date.strftime('%d %b %Y') }} – {{ req.end_date.strftime('%d %b %Y') }}
+      · {{ req.sessions|join(' + ') or 'no sessions' }}
+      {% if req.assigned_resource %}· assigned to {{ req.assigned_resource.name }}{% endif %}
+    </p>
+  </div>
+  <div class="actions" style="margin:0">
+    <a class="btn" href="/requests">← All requests</a>
+    <a class="btn" href="/applicants/{{ req.applicant_id }}">Applicant history</a>
+    {% if req.assigned_resource %}
+      <a class="btn" href="/calendar?date={{ req.start_date.isoformat() }}&resource_id={{ req.assigned_resource_id }}">
+        Show on calendar
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid grid-2" style="align-items: start;">
+  <div>
+    {# ---------------- Request fields ---------------- #}
+    <form class="panel" method="post" action="/requests/{{ req.id }}/update">
+      <h2>Request details</h2>
+      {% set editable = req.status == 'PENDING' %}
+      {% if not editable %}
+        <p class="muted">This request is {{ req.status }} and can no longer be edited.</p>
+      {% endif %}
+      <fieldset style="border:0;padding:0;margin:0" {{ 'disabled' if not editable }}>
+        <div class="grid grid-2">
+          <div class="field">
+            <label for="name">Applicant name</label>
+            <input type="text" id="name" name="name" value="{{ req.applicant.name }}">
+          </div>
+          <div class="field">
+            <label for="sid_netid">SID / NetID</label>
+            <input type="text" id="sid_netid" name="sid_netid" value="{{ req.applicant.sid_netid or '' }}">
+          </div>
+          <div class="field">
+            <label for="department">Department</label>
+            <input type="text" id="department" name="department" value="{{ req.applicant.department or '' }}">
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input type="text" id="email" name="email" value="{{ req.applicant.email or '' }}">
+          </div>
+          <div class="field">
+            <label for="phone">Phone</label>
+            <input type="text" id="phone" name="phone" value="{{ req.applicant.phone or '' }}">
+          </div>
+          <div class="field">
+            <label for="response_id">Response ID</label>
+            <input type="text" id="response_id" name="response_id" value="{{ req.response_id or '' }}">
+          </div>
+          <div class="field">
+            <label for="facility">Facility</label>
+            <input type="text" id="facility" name="facility" value="{{ req.facility or '' }}">
+          </div>
+          <div class="field">
+            <label for="booking_type">Booking type</label>
+            <input type="text" id="booking_type" name="booking_type" value="{{ req.booking_type or '' }}">
+          </div>
+          <div class="field">
+            <label for="start_date">Start date</label>
+            <input type="date" id="start_date" name="start_date" value="{{ req.start_date.isoformat() }}">
+          </div>
+          <div class="field">
+            <label for="end_date">End date</label>
+            <input type="date" id="end_date" name="end_date" value="{{ req.end_date.isoformat() }}">
+          </div>
+          <div class="field">
+            <label for="preferred_resource_id">Preferred robot</label>
+            <select id="preferred_resource_id" name="preferred_resource_id">
+              <option value="">— none —</option>
+              {% for resource in resources %}
+                <option value="{{ resource.id }}" {{ 'selected' if resource.id == req.preferred_resource_id }}>
+                  {{ resource.name }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label>Sessions</label>
+            <div class="checks" style="padding-top: 5px;">
+              {% for session in SESSION_ORDER %}
+                <label class="check">
+                  <input type="checkbox" name="sessions" value="{{ session }}"
+                         {{ 'checked' if session in req.sessions }}>
+                  {{ SESSION_LABELS[session] }}
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="purpose">Booking purpose</label>
+          <textarea id="purpose" name="purpose" rows="2">{{ req.purpose or '' }}</textarea>
+        </div>
+        <div class="field">
+          <label for="remarks">Remarks</label>
+          <textarea id="remarks" name="remarks" rows="2">{{ req.remarks or '' }}</textarea>
+        </div>
+        {% if editable %}
+          <div class="actions"><button class="btn" type="submit">Save changes</button></div>
+        {% endif %}
+      </fieldset>
+    </form>
+
+    <div class="panel">
+      <h2>Record</h2>
+      <dl class="kv">
+        <dt>Status</dt><dd>{{ status_badge(req.status) }}</dd>
+        <dt>Created</dt><dd>{{ dt(req.created_at) }}</dd>
+        <dt>Updated</dt><dd>{{ dt(req.updated_at) }}</dd>
+        <dt>Decided</dt><dd>{{ dt(req.decided_at) }}</dd>
+        {% if req.rejection_reason %}
+          <dt>{{ 'Cancellation' if req.status == 'CANCELLED' else 'Rejection' }} reason</dt>
+          <dd>{{ req.rejection_reason }}</dd>
+        {% endif %}
+        {% set active = req.reservations | selectattr('status', 'equalto', 'ACTIVE') | list %}
+        <dt>Reservations</dt>
+        <dd>{{ active|length }} active of {{ req.reservations|length }} total</dd>
+      </dl>
+      {% if req.raw_text %}
+        <details class="raw" style="margin-top: 12px;">
+          <summary>Original pasted email</summary>
+          <pre>{{ req.raw_text }}</pre>
+        </details>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    {# ---------------- Availability ---------------- #}
+    <div class="panel">
+      <div class="panel-head"><h2>Availability</h2></div>
+      <form method="post" action="/requests/{{ req.id }}/check">
+        <div class="grid grid-2" style="align-items: end;">
+          <div class="field" style="margin:0">
+            <label for="resource_id">Robot to check</label>
+            <select id="resource_id" name="resource_id">
+              {% set target = checked_resource_id or req.assigned_resource_id or req.preferred_resource_id %}
+              <option value="">— choose —</option>
+              {% for resource in resources %}
+                <option value="{{ resource.id }}" {{ 'selected' if resource.id == target }}>
+                  {{ resource.name }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="actions" style="margin:0">
+            <button class="btn btn-primary" type="submit">Check Availability</button>
+          </div>
+        </div>
+      </form>
+
+      {% if report and report.preferred %}
+        {% set pref = report.preferred %}
+        <h3>{{ pref.resource.name }}</h3>
+        {% if pref.status == OUT_OF_SERVICE %}
+          <div class="msg msg-err" style="margin:0">
+            OUT OF SERVICE — {{ pref.resource.name }} is {{ pref.resource.status }}.
+          </div>
+        {% elif pref.status == AVAILABLE %}
+          <div class="msg msg-ok" style="margin:0">
+            AVAILABLE — all {{ pref.slots|length }} requested slots are free.
+          </div>
+        {% else %}
+          <div class="msg msg-err" style="margin:0">
+            CONFLICT — {{ pref.conflict_count }} of {{ pref.slots|length }} slots overlap.
+          </div>
+        {% endif %}
+
+        <ul class="slot-list">
+          {% for slot in pref.slots %}
+            <li class="{{ 'slot-ok' if slot.available else 'slot-bad' }}">
+              <span class="when">{{ slot.slot.label }}</span>
+              <span class="what">{{ slot.description }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+
+        {% if pref.status != AVAILABLE %}
+          <h3>Alternative robots</h3>
+          {% if report.alternatives %}
+            {% for alt in report.alternatives %}
+              <div class="alt-row {{ 'alt-ok' if alt.fully_available }}">
+                <span><strong>{{ alt.resource.name }}</strong>
+                  <span class="muted">· {{ alt.resource.resource_group }}</span></span>
+                <span>
+                  {{ alt.summary }}
+                  {% if alt.fully_available and req.status == 'PENDING' %}
+                    <form class="inline-form" method="post" action="/requests/{{ req.id }}/check">
+                      <input type="hidden" name="resource_id" value="{{ alt.resource.id }}">
+                      <button class="btn btn-sm" type="submit">Use this robot</button>
+                    </form>
+                  {% endif %}
+                </span>
+              </div>
+            {% endfor %}
+          {% else %}
+            <p class="muted">No other active robots in this group.</p>
+          {% endif %}
+        {% endif %}
+      {% else %}
+        <p class="muted">Choose a robot and click Check Availability to see every requested slot.</p>
+      {% endif %}
+    </div>
+
+    {# ---------------- Decisions ---------------- #}
+    {% if req.status == 'PENDING' %}
+      <div class="panel">
+        <h2>Decision</h2>
+        <form method="post" action="/requests/{{ req.id }}/approve" style="margin-bottom: 18px;">
+          <div class="field">
+            <label for="approve_resource">Assign robot</label>
+            <select id="approve_resource" name="resource_id" required>
+              {% set target = checked_resource_id or req.assigned_resource_id or req.preferred_resource_id %}
+              <option value="">— choose a robot —</option>
+              {% for resource in resources %}
+                <option value="{{ resource.id }}" {{ 'selected' if resource.id == target }}>
+                  {{ resource.name }}
+                </option>
+              {% endfor %}
+            </select>
+            <div class="field-note" style="color: var(--muted)">
+              Availability is re-checked before anything is written.
+            </div>
+          </div>
+          <button class="btn btn-ok" type="submit">Accept</button>
+        </form>
+
+        <form method="post" action="/requests/{{ req.id }}/reject">
+          <div class="field">
+            <label for="rejection_reason">Rejection reason (optional)</label>
+            <textarea id="rejection_reason" name="rejection_reason" rows="2"></textarea>
+          </div>
+          <button class="btn btn-danger" type="submit">Reject</button>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if req.status in ['PENDING', 'APPROVED'] %}
+      <form class="panel" method="post" action="/requests/{{ req.id }}/cancel"
+            onsubmit="return confirm('Cancel this booking? Reservations are released but the history is kept.')">
+        <h2>Cancel booking</h2>
+        <div class="field">
+          <label for="cancel_reason">Reason (optional)</label>
+          <input type="text" id="cancel_reason" name="cancel_reason">
+        </div>
+        <button class="btn btn-danger" type="submit">Cancel Booking</button>
+      </form>
+    {% endif %}
+
+    {% if req.reservations %}
+      <div class="panel">
+        <h2>Reservations</h2>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Robot</th><th>When</th><th>Status</th></tr></thead>
+            <tbody>
+              {% for reservation in req.reservations|sort(attribute='start_at') %}
+                <tr>
+                  <td>{{ reservation.resource.name }}</td>
+                  <td class="nowrap">
+                    {{ reservation.start_at.strftime('%a %d %b, %H:%M') }}–{{ reservation.end_at.strftime('%H:%M') }}
+                  </td>
+                  <td>{{ reservation.status }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

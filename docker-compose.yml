@@ -1,0 +1,15 @@
+services:
+  booking:
+    build: .
+    image: robot-booking:1.0.0
+    container_name: robot-booking
+    restart: unless-stopped
+    # Bind to the internal LAN/VPN interface only. Prefix with an interface IP
+    # (e.g. "10.8.8.7:8757:8757") if the host also has a public interface.
+    ports:
+      - "8757:8757"
+    volumes:
+      - ./data:/data
+    environment:
+      BOOKING_DB_PATH: /data/booking.db
+      BOOKING_LOG_LEVEL: INFO

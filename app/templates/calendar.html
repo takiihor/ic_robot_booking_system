@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% from "_macros.html" import resource_badge %}
+{% block title %}Calendar{% endblock %}
+{% block content %}
+
+<div class="panel-head">
+  <div>
+    <h1>Robot Resource Calendar</h1>
+    <p class="subtitle" style="margin:0">
+      Week of {{ grid.start.strftime('%d %b %Y') }} – {{ grid.end.strftime('%d %b %Y') }}
+    </p>
+  </div>
+  <div class="actions" style="margin:0">
+    <a class="btn" href="/calendar?date={{ prev_week }}{{ filter_qs }}">&larr; Previous week</a>
+    <a class="btn" href="/calendar?date={{ today }}{{ filter_qs }}">Today</a>
+    <a class="btn" href="/calendar?date={{ next_week }}{{ filter_qs }}">Next week &rarr;</a>
+    <button class="btn btn-primary" type="button" onclick="openBlockForm()">+ Maintenance / Block</button>
+  </div>
+</div>
+
+<form class="cal-toolbar panel" method="get" action="/calendar">
+  <div class="field" style="width: 170px;">
+    <label for="date">Date</label>
+    <input type="date" id="date" name="date" value="{{ selected_date }}">
+  </div>
+  <div class="field" style="width: 210px;">
+    <label for="resource_id">Resource</label>
+    <select id="resource_id" name="resource_id">
+      <option value="">All resources</option>
+      {% for resource in all_resources %}
+        <option value="{{ resource.id }}" {{ 'selected' if resource.id in resource_ids }}>
+          {{ resource.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field" style="width: 200px;">
+    <label for="source_type">Booking type</label>
+    <select id="source_type" name="source_type">
+      <option value="">All types</option>
+      {% for value, label in source_types %}
+        <option value="{{ value }}" {{ 'selected' if value in selected_types }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field" style="flex: 1; min-width: 200px;">
+    <label for="cal-q">Applicant / SID / NetID</label>
+    <input type="search" id="cal-q" name="q" value="{{ q or '' }}" placeholder="e.g. 25104512r">
+  </div>
+  <div class="actions" style="margin:0">
+    <button class="btn btn-primary" type="submit">Apply</button>
+    <a class="btn" href="/calendar">Reset</a>
+  </div>
+</form>
+
+{% if not grid.rows %}
+  <div class="panel empty">
+    No resources configured yet. <a href="/resources">Add a robot</a> to get started.
+  </div>
+{% else %}
+<div class="cal-wrap">
+  <table class="calendar">
+    <thead>
+      <tr>
+        <th class="res-col" rowspan="2">Robot</th>
+        {% for day in grid.days %}
+          <th colspan="2" class="{{ 'today' if day == today_date }} {{ 'weekend' if day.weekday() >= 5 }}">
+            {{ day.strftime('%a %d %b') }}
+          </th>
+        {% endfor %}
+      </tr>
+      <tr>
+        {% for day, session in grid.columns %}
+          <th class="{{ 'today' if day == today_date }} {{ 'weekend' if day.weekday() >= 5 }}">{{ session }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in grid.rows %}
+        <tr class="{{ 'res-out' if not row.resource.is_active }}">
+          <td class="res-col">
+            <div class="res-name">{{ row.resource.name }}</div>
+            <div class="res-meta">
+              {{ row.resource.model or row.resource.resource_group }}
+              {% if not row.resource.is_active %}· {{ resource_badge(row.resource.status) }}{% endif %}
+            </div>
+          </td>
+          {% for cell in row.cells %}
+            <td class="slot {{ 'free' if cell.is_free }} {{ 'weekend' if cell.day.weekday() >= 5 }}">
+              <div class="slot-inner">
+                {% if not row.resource.is_active and cell.is_free %}
+                  <span class="out-tag">Out</span>
+                {% endif %}
+                {% for reservation in cell.reservations %}
+                  <button type="button" class="ev ev-{{ reservation.source_type }}"
+                          onclick="openReservation({{ reservation.id }})"
+                          title="{{ reservation.title }} — {{ reservation.type_label }}">
+                    <strong>{{ reservation.title }}</strong>
+                    <span>{{ reservation.short_label }}</span>
+                  </button>
+                {% endfor %}
+              </div>
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="legend">
+  <span><span class="swatch" style="background:var(--booking-bg);border-color:var(--booking-border)"></span>Research / booking</span>
+  <span><span class="swatch" style="background:var(--lesson-bg);border-color:var(--lesson-border)"></span>Lesson</span>
+  <span><span class="swatch" style="background:var(--maint-bg);border-color:var(--maint-border)"></span>Maintenance</span>
+  <span><span class="swatch" style="background:var(--block-bg);border-color:var(--block-border)"></span>Out of service / block</span>
+  <span class="muted">· AM 08:30–12:00 · PM 13:30–17:00</span>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block modal %}
+<div class="modal-backdrop" id="detail-modal" hidden onclick="if (event.target === this) closeModal()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+    <div class="modal-head">
+      <h2 id="detail-title">Details</h2>
+      <button class="modal-close" type="button" onclick="closeModal()" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="detail-body">Loading…</div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="block-modal" hidden onclick="if (event.target === this) closeBlockForm()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="block-title">
+    <form method="post" action="/reservations">
+      <div class="modal-head">
+        <h2 id="block-title">Add maintenance / block</h2>
+        <button class="modal-close" type="button" onclick="closeBlockForm()" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid grid-2">
+          <div class="field">
+            <label for="b-resource">Robot</label>
+            <select id="b-resource" name="resource_id" required>
+              {% for resource in all_resources %}
+                <option value="{{ resource.id }}">{{ resource.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="b-type">Type</label>
+            <select id="b-type" name="source_type">
+              <option value="MAINTENANCE">Maintenance</option>
+              <option value="BLOCK">Out of service / block</option>
+              <option value="LESSON">Lesson</option>
+              <option value="BOOKING">Research / booking</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="b-title">Title</label>
+          <input type="text" id="b-title" name="title" required placeholder="e.g. Annual calibration">
+        </div>
+        <div class="grid grid-2">
+          <div class="field">
+            <label for="b-start">Start</label>
+            <input type="datetime-local" id="b-start" name="start_at" required value="{{ default_block_start }}">
+          </div>
+          <div class="field">
+            <label for="b-end">End</label>
+            <input type="datetime-local" id="b-end" name="end_at" required value="{{ default_block_end }}">
+          </div>
+        </div>
+        <div class="field">
+          <label for="b-details">Details</label>
+          <textarea id="b-details" name="details" rows="2"></textarea>
+        </div>
+        <input type="hidden" name="redirect_to" value="{{ current_url }}">
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" onclick="closeBlockForm()">Cancel</button>
+        <button class="btn btn-primary" type="submit">Create</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const detailModal = document.getElementById('detail-modal');
+  const detailBody = document.getElementById('detail-body');
+  const blockModal = document.getElementById('block-modal');
+
+  async function openReservation(id) {
+    detailBody.innerHTML = 'Loading…';
+    detailModal.hidden = false;
+    try {
+      const response = await fetch(`/reservations/${id}/detail`);
+      detailBody.innerHTML = response.ok
+        ? await response.text()
+        : '<p class="msg msg-err">Could not load these details.</p>';
+    } catch (err) {
+      detailBody.innerHTML = '<p class="msg msg-err">Could not load these details.</p>';
+    }
+  }
+  function closeModal() { detailModal.hidden = true; }
+  function openBlockForm() { blockModal.hidden = false; }
+  function closeBlockForm() { blockModal.hidden = true; }
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { closeModal(); closeBlockForm(); }
+  });
+</script>
+{% endblock %}
