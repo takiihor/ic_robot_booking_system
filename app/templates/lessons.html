@@ -5,7 +5,8 @@
 <h1>Lesson Schedule</h1>
 <p class="subtitle">
   Paste the timetable, correct the parsed rows, choose the affected robots, then import.
-  Lessons block robot time exactly like a booking.
+  Lessons block robot time exactly like a booking. Pasting a table directly from PolyU,
+  Excel, or a browser expands merged cells before parsing.
 </p>
 
 <div class="panel">
@@ -123,6 +124,75 @@
 
 {% block scripts %}
 <script>
+  function flattenClipboardTable(table) {
+    const pendingSpans = [];
+    const rows = [];
+
+    const normaliseCell = (cell) => (cell.innerText || cell.textContent || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\s*\r?\n\s*/g, ' / ')
+      .replace(/[ \t]+/g, ' ')
+      .trim();
+
+    const fillPending = (row, state) => {
+      while (pendingSpans[state.column]) {
+        const span = pendingSpans[state.column];
+        row[state.column] = span.value;
+        span.remaining -= 1;
+        if (span.remaining === 0) delete pendingSpans[state.column];
+        state.column += 1;
+      }
+    };
+
+    for (const sourceRow of Array.from(table.rows)) {
+      const row = [];
+      const state = { column: 0 };
+      fillPending(row, state);
+
+      for (const cell of Array.from(sourceRow.cells)) {
+        fillPending(row, state);
+        const value = normaliseCell(cell);
+        const columnSpan = Math.max(1, Number(cell.colSpan) || 1);
+        const rowSpan = Math.max(1, Number(cell.rowSpan) || 1);
+
+        for (let offset = 0; offset < columnSpan; offset += 1) {
+          const column = state.column + offset;
+          row[column] = value;
+          if (rowSpan > 1) {
+            pendingSpans[column] = { value, remaining: rowSpan - 1 };
+          }
+        }
+        state.column += columnSpan;
+      }
+
+      fillPending(row, state);
+      rows.push(row.map((value) => value || '').join('\t'));
+    }
+
+    return rows.filter((row) => row.trim()).join('\n');
+  }
+
+  const timetableTextarea = document.getElementById('raw_text');
+  timetableTextarea.addEventListener('paste', (event) => {
+    const html = event.clipboardData && event.clipboardData.getData('text/html');
+    if (!html) return;
+
+    const documentFragment = new DOMParser().parseFromString(html, 'text/html');
+    const table = documentFragment.querySelector('table');
+    if (!table) return;
+
+    const flattened = flattenClipboardTable(table);
+    if (!flattened) return;
+
+    event.preventDefault();
+    timetableTextarea.setRangeText(
+      flattened,
+      timetableTextarea.selectionStart,
+      timetableTextarea.selectionEnd,
+      'end',
+    );
+  });
+
   function selectAllRobots() {
     document.querySelectorAll('.robot-check').forEach((box) => { box.checked = true; });
   }
