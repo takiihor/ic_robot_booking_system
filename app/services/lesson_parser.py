@@ -34,7 +34,13 @@ DATE_TOKEN = re.compile(
     r"|\b[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}\b"
 )
 
-_HEADER_WORDS = {"date", "course", "subject", "time", "start", "end", "venue", "location", "room"}
+_HEADER_WORDS = {
+    "date", "course", "subject", "module", "time", "start", "end", "venue",
+    "location", "locations", "room",
+}
+MARKDOWN_TABLE_DIVIDER = re.compile(
+    r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
+)
 
 
 @dataclass
@@ -144,10 +150,11 @@ def _looks_like_header(line: str) -> bool:
 
 
 VENUE_PATTERN = re.compile(r"\b(room|rm\.?|lab|laborator\w*|venue|hall|studio|block)\b", re.I)
+POLYU_VENUE_CODE = re.compile(r"\b[A-Z]\d{3,4}[A-Z]?(?:-Z\d{1,2})?\b", re.I)
 
 
 def _looks_like_venue(cell: str) -> bool:
-    return bool(VENUE_PATTERN.search(cell))
+    return bool(VENUE_PATTERN.search(cell) or POLYU_VENUE_CODE.search(cell))
 
 
 VENUE_PHRASE = re.compile(
@@ -254,7 +261,7 @@ def parse_timetable(raw: str) -> ParsedTimetable:
 
     skipped = 0
     for line in text.split("\n"):
-        if not line.strip() or _looks_like_header(line):
+        if not line.strip() or _looks_like_header(line) or MARKDOWN_TABLE_DIVIDER.match(line):
             continue
         row = parse_line(line)
         if row is None:

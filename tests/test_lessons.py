@@ -39,6 +39,27 @@ def test_multi_space_columns_parse():
     assert parsed.rows[0].location == "Lab W301"
 
 
+def test_markdown_timetable_keeps_polyu_venue_codes_as_locations():
+    parsed = parse_timetable(
+        "| Module | Time | Locations |\n"
+        "| ------ | ---- | --------- |\n"
+        "| **SEHS2371** | 15:30–18:30 | W402C(016)(ICT); W402-Z2(016)(ICT) |\n"
+        "| **MM3462** | 13:50–14:10 | W402E-Z14(020)(BCO); U401-Z4(016)(BCO) |"
+    )
+
+    assert [row.course for row in parsed.rows] == ["SEHS2371", "MM3462"]
+    assert [(row.start_time, row.end_time) for row in parsed.rows] == [
+        (time(15, 30), time(18, 30)),
+        (time(13, 50), time(14, 10)),
+    ]
+    assert [row.location for row in parsed.rows] == [
+        "W402C(016)(ICT); W402-Z2(016)(ICT)",
+        "W402E-Z14(020)(BCO); U401-Z4(016)(BCO)",
+    ]
+    assert not any("skipped" in warning for warning in parsed.warnings)
+    assert all("No date found" in row.warnings for row in parsed.rows)
+
+
 def test_iso_date_is_not_mistaken_for_a_time_range():
     parsed = parse_timetable("2026-09-01\tME3101\t09:30-12:20\tRoom FG601")
     assert parsed.rows[0].start_time == time(9, 30)
