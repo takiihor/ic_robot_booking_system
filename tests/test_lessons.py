@@ -60,6 +60,48 @@ def test_markdown_timetable_keeps_polyu_venue_codes_as_locations():
     assert all("No date found" in row.warnings for row in parsed.rows)
 
 
+def test_header_mapped_polyu_timetable_keeps_each_date_and_per_class_locations():
+    parsed = parse_timetable(
+        "Client\tSubject\tSubject Title\tGroups\tModule\tTask\tHour\tLocation\t"
+        "Group\tYear\tSEM\tWeek\tDate\tWeekday\tTime\tLocations\tTeachers\tClassID\n"
+        "HKCC\t26A112 SEHS2371\tAircraft Hardware\tA[26]\tSEHS2371\tAutomation\t12.00\t"
+        "F2F W402C\tA[26]\t2026-2027\t1.0\tW02\t2026-09-08\tTue\t15:30 / 18:30\t"
+        "W402C(016)(ICT); W402-Z2(016)(ICT)\tYU Bun\t26A112T03_20260908_15301830\n"
+        "HKCC\t26A112 SEHS2371\tAircraft Hardware\tA[26]\t\t\t\t\t\t2026-2027\t"
+        "1.0\tW04\t2026-09-21\tMon\t15:30 / 18:30\t"
+        "W402C(016)(ICT); W402-Z2(016)(ICT)\tYU Bun\t26A112T03_20260921_15301830"
+    )
+
+    assert len(parsed.rows) == 2
+    first, second = parsed.rows
+    assert [row.course for row in parsed.rows] == ["SEHS2371", "SEHS2371"]
+    assert [row.day for row in parsed.rows] == [date(2026, 9, 8), date(2026, 9, 21)]
+    assert [(row.start_time, row.end_time) for row in parsed.rows] == [
+        (time(15, 30), time(18, 30)),
+        (time(15, 30), time(18, 30)),
+    ]
+    assert first.location == "W402C(016)(ICT); W402-Z2(016)(ICT)"
+    assert first.notes == ""
+    assert second.location == "W402C(016)(ICT); W402-Z2(016)(ICT)"
+    assert "Module inherited from preceding table row" in second.warnings
+    assert all(row.is_complete for row in parsed.rows)
+
+
+def test_header_mapped_start_and_end_columns_parse_without_a_time_range():
+    parsed = parse_timetable(
+        "Subject Code\tDate\tStart Time\tEnd Time\tVenue\tRemark\n"
+        "ISE3018\t2026-11-24\t08:30\t11:30\tW402C(016)(ICT)\tRobot laboratory"
+    )
+
+    row = parsed.rows[0]
+    assert row.course == "ISE3018"
+    assert row.day == date(2026, 11, 24)
+    assert (row.start_time, row.end_time) == (time(8, 30), time(11, 30))
+    assert row.location == "W402C(016)(ICT)"
+    assert row.notes == "Robot laboratory"
+    assert row.is_complete
+
+
 def test_iso_date_is_not_mistaken_for_a_time_range():
     parsed = parse_timetable("2026-09-01\tME3101\t09:30-12:20\tRoom FG601")
     assert parsed.rows[0].start_time == time(9, 30)
@@ -94,6 +136,8 @@ def test_empty_paste_warns():
         ("9.30 am - 12.20 pm", (time(9, 30), time(12, 20))),
         ("9am - 12pm", (time(9, 0), time(12, 0))),
         ("13:30 to 17:00", (time(13, 30), time(17, 0))),
+        ("15:30 / 18:30", (time(15, 30), time(18, 30))),
+        ("15:30 18:30", (time(15, 30), time(18, 30))),
         ("no times here", (None, None)),
     ],
 )
