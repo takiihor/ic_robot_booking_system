@@ -98,8 +98,20 @@ def normalize(text: str) -> str:
     return text.strip()
 
 
+# Parenthesised qualifiers the ICT form appends to its labels, e.g.
+# "End Date (Consecutive Booking only)" or "Remarks (if any)". They carry no
+# meaning for us, and leaving them in stopped the label matching at all.
+_QUALIFIER = re.compile(r"[(\[{][^)\]}]*[)\]}]")
+
+
 def _label_key(fragment: str) -> str:
-    """Reduce a candidate label to a comparable key."""
+    """Reduce a candidate label to a comparable key.
+
+    Bracketed qualifiers are dropped so a label still matches when the form
+    adds a note to it — silently missing the end-date label used to collapse a
+    multi-day booking down to a single day.
+    """
+    fragment = _QUALIFIER.sub(" ", fragment)
     fragment = fragment.strip().strip("*_-–—#>").strip()
     fragment = re.sub(r"[^a-z0-9 ]+", " ", fragment.lower())
     return re.sub(r"\s+", " ", fragment).strip()
@@ -112,7 +124,7 @@ def _match_label(line: str) -> tuple[str, str] | None:
         return None
 
     head, sep, tail = stripped.partition(":")
-    if sep and len(head) <= 40:
+    if sep and len(head) <= 60:
         key = _label_key(head)
         for alias, canonical in _FLAT_LABELS:
             if key == alias:
@@ -199,6 +211,18 @@ def parse_date(value: str | None) -> date | None:
     return None
 
 
+def _dates_in_block(block: str | None) -> list[date]:
+    """Every distinct date appearing in a captured value block, in order."""
+    if not block:
+        return []
+    found: list[date] = []
+    for line in block.split("\n"):
+        parsed = parse_date(line)
+        if parsed and parsed not in found:
+            found.append(parsed)
+    return found
+
+
 def parse_sessions(value: str | None) -> list[str]:
     """Detect AM/PM sessions from free-form session text."""
     if not value:
@@ -282,6 +306,16 @@ def parse_booking_email(raw: str) -> ParsedRequest:
     if end_raw and result.end_date is None:
         result.warnings.append(f"Could not read the end date from {end_raw.strip()!r}.")
     if result.end_date is None and result.start_date is not None:
+        # No end-date label was recognised. A second date sitting inside the
+        # start-date block means an unrecognised label swallowed it, which would
+        # silently turn a multi-day loan into a single day (SPEC 18).
+        swallowed = [d for d in _dates_in_block(start_raw) if d != result.start_date]
+        if swallowed:
+            result.warnings.append(
+                "No end-date label was recognised, but the start-date section also "
+                f"mentions {', '.join(d.isoformat() for d in swallowed)} — check the "
+                "end date before saving."
+            )
         result.end_date = result.start_date
     if (
         result.start_date

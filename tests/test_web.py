@@ -196,7 +196,7 @@ def test_conflicting_request_shows_conflicts_and_free_alternatives(seeded):
 
     # Approving onto the taken robot must be refused.
     refused = seeded.post(f"{second_url}/approve", data={"resource_id": str(ids["UR10e (03)"])})
-    assert "no longer free" in refused.text
+    assert "is not free for" in refused.text
 
     # Approving onto a free alternative works.
     ok = seeded.post(f"{second_url}/approve", data={"resource_id": str(ids["UR10e (01)"])})
@@ -463,3 +463,294 @@ def test_pasted_text_is_escaped_not_rendered(seeded):
     response = seeded.post("/requests/parse", data={"raw_text": payload})
     assert "<script>alert" not in response.text
     assert "&lt;script&gt;" in response.text
+
+
+# --- correcting a request without re-entering it ---------------------------
+
+def _pending(seeded, ids, **overrides):
+    data = {
+        "name": "DING Changwen",
+        "sid_netid": "25104512r",
+        "response_id": "R-FIX",
+        "start_date": "2026-08-31",
+        "end_date": "2026-08-31",
+        "sessions": ["AM"],
+        "preferred_resource_id": str(ids["UR10e (05)"]),
+        "action": "save",
+    }
+    data.update(overrides)
+    return created_request_url(submit(seeded, "/requests", data))
+
+
+def test_approved_booking_can_be_amended_instead_of_re_entered(seeded):
+    ids = _resource_ids(seeded)
+    url = _pending(seeded, ids)
+    seeded.post(f"{url}/approve", data={"resource_id": str(ids["UR10e (05)"])})
+
+    page = seeded.get(url).text
+    assert "Amend booking" in page  # the form is live, not a disabled fieldset
+
+    amended = submit(
+        seeded,
+        f"{url}/update",
+        {
+            "name": "DING Changwen",
+            "sid_netid": "25104512r",
+            "response_id": "R-FIX",
+            "start_date": "2026-09-07",
+            "end_date": "2026-09-07",
+            "sessions": ["PM"],
+            "preferred_resource_id": str(ids["UR10e (05)"]),
+            "assigned_resource_id": str(ids["UR10e (02)"]),
+        },
+    )
+    assert amended.status_code == 303
+    detail = seeded.get(url).text
+    assert "APPROVED" in detail
+
+    # The calendar followed the amendment: off the old day, onto the new robot.
+    assert "DING Changwen" not in seeded.get("/calendar?date=2026-08-31").text
+    assert "DING Changwen" in seeded.get("/calendar?date=2026-09-07").text
+
+
+def test_cancelled_request_can_be_reopened_and_re_approved(seeded):
+    ids = _resource_ids(seeded)
+    url = _pending(seeded, ids)
+    seeded.post(f"{url}/approve", data={"resource_id": str(ids["UR10e (05)"])})
+    seeded.post(f"{url}/cancel", data={"cancel_reason": "wrong dates"})
+
+    page = seeded.get(url).text
+    assert "Reopen as Pending" in page
+
+    assert submit(seeded, f"{url}/reopen", {}).status_code == 303
+    reopened = seeded.get(url).text
+    assert "PENDING" in reopened
+    # Editable again, and approvable again, with no re-entry.
+    assert seeded.post(f"{url}/approve", data={"resource_id": str(ids["UR10e (05)"])}).status_code
+    assert "APPROVED" in seeded.get(url).text
+
+
+def test_same_application_can_be_re_entered_after_cancelling(seeded):
+    ids = _resource_ids(seeded)
+    url = _pending(seeded, ids)
+    seeded.post(f"{url}/cancel", data={"cancel_reason": "typo"})
+
+    # Re-pasting the same email keeps the Response ID that links back to Teams.
+    again = submit(
+        seeded,
+        "/requests",
+        {
+            "name": "DING Changwen",
+            "sid_netid": "25104512r",
+            "response_id": "R-FIX",
+            "start_date": "2026-09-07",
+            "end_date": "2026-09-07",
+            "sessions": ["AM"],
+            "preferred_resource_id": str(ids["UR10e (05)"]),
+            "action": "save",
+        },
+    )
+    assert again.status_code == 303, again.text[:1000]
+    assert created_request_url(again) != url
+
+
+def test_a_single_slot_can_be_released_from_an_approved_booking(seeded):
+    ids = _resource_ids(seeded)
+    url = _pending(seeded, ids, end_date="2026-09-01", sessions=["AM", "PM"])
+    seeded.post(f"{url}/approve", data={"resource_id": str(ids["UR10e (05)"])})
+
+    from app.models import Reservation
+
+    with seeded.db_factory() as db:
+        slots = db.query(Reservation).order_by(Reservation.start_at).all()
+        assert len(slots) == 4
+        first = slots[0].id
+
+    released = submit(
+        seeded, f"/reservations/{first}/cancel", {"redirect_to": url}
+    )
+    assert released.status_code == 303
+    assert "3+still+booked" in released.headers["location"].replace("%20", "+")
+
+    detail = seeded.get(url).text
+    assert "APPROVED" in detail  # the rest of the booking survives
+
+
+# --- accepting over a conflict ---------------------------------------------
+
+def test_accept_anyway_books_the_robot_and_flags_the_shared_day(seeded):
+    """A lesson clash must not be able to veto a loan (SPEC 11.8)."""
+    ids = _resource_ids(seeded)
+    submit(
+        seeded,
+        "/lessons/import",
+        {
+            "raw_text": TIMETABLE, "keep": ["0"], "course": ["ME3101"],
+            "date": ["2026-09-01"], "start_time": ["09:30"], "end_time": ["12:20"],
+            "location": [""], "notes": [""], "resource_ids": [str(ids["UR10e (01)"])],
+        },
+    )
+    url = _pending(
+        seeded, ids, response_id="R-CLASH", start_date="2026-09-01", end_date="2026-09-01",
+        sessions=["AM"], preferred_resource_id=str(ids["UR10e (01)"]),
+    )
+
+    # The plain Accept is still refused and points at the override.
+    refused = seeded.post(f"{url}/approve", data={"resource_id": str(ids["UR10e (01)"])})
+    assert "Accept anyway" in refused.text
+
+    forced = submit(
+        seeded,
+        f"{url}/approve",
+        {
+            "resource_id": str(ids["UR10e (01)"]),
+            "allow_conflicts": "1",
+            "conflict_note": "Return by 09:00.",
+        },
+    )
+    assert forced.status_code == 303
+    assert "share the robot" in forced.headers["location"].replace("%20", " ")
+
+    detail = seeded.get(url).text
+    assert "APPROVED" in detail
+    assert "Robot must be handed back on these days" in detail
+    assert "Return by 09:00." in detail
+    assert "ME3101" in detail
+
+    # Both entries sit in the calendar, and the loan is flagged as shared.
+    calendar = seeded.get("/calendar?date=2026-09-01").text
+    assert "ev-clash" in calendar
+    assert "ME3101" in calendar and "DING Changwen" in calendar
+
+
+def test_accept_anyway_is_refused_for_an_out_of_service_robot(seeded):
+    ids = _resource_ids(seeded)
+    url = _pending(seeded, ids, response_id="R-DEAD",
+                   preferred_resource_id=str(ids["UR10e (04)"]))
+    page = seeded.post(
+        f"{url}/approve",
+        data={"resource_id": str(ids["UR10e (04)"]), "allow_conflicts": "1"},
+    )
+    assert "cannot be booked" in page.text
+    assert "PENDING" in page.text
+
+
+def test_the_availability_panel_offers_the_override_only_when_it_clashes(seeded):
+    ids = _resource_ids(seeded)
+    url = _pending(seeded, ids, response_id="R-FREE", start_date="2026-10-05",
+                   end_date="2026-10-05", sessions=["AM"],
+                   preferred_resource_id=str(ids["UR10e (02)"]))
+    checked = seeded.post(f"{url}/check", data={"resource_id": str(ids["UR10e (02)"])})
+    assert "AVAILABLE" in checked.text
+    assert "Accept anyway" not in checked.text
+
+
+# --- applicant history on the parse preview --------------------------------
+
+def test_preview_marks_a_first_time_applicant(seeded):
+    page = seeded.post("/requests/parse", data={"raw_text": SAMPLE_EMAIL})
+    assert page.status_code == 200
+    assert "First-time applicant" in page.text
+    assert "no booking history here" in page.text
+
+
+def test_preview_marks_a_returning_applicant_with_their_last_booking(seeded):
+    ids = _resource_ids(seeded)
+    submit(
+        seeded,
+        "/requests",
+        {
+            "name": "DING Changwen", "sid_netid": "25104512r", "response_id": "R-HIST",
+            "start_date": "2026-03-02", "end_date": "2026-03-02", "sessions": ["AM"],
+            "preferred_resource_id": str(ids["UR10e (05)"]), "action": "save",
+        },
+    )
+    page = seeded.post("/requests/parse", data={"raw_text": SAMPLE_EMAIL})
+    assert "Returning applicant" in page.text
+    assert "25104512r" in page.text
+    assert "1 previous request" in page.text
+    assert "02 Mar 2026" in page.text
+
+
+def test_request_detail_shows_whether_the_applicant_is_returning(seeded):
+    ids = _resource_ids(seeded)
+    first = _pending(seeded, ids, response_id="R-D1")
+    assert "First booking" in seeded.get(first).text
+
+    second = _pending(seeded, ids, response_id="R-D2", start_date="2026-10-05",
+                      end_date="2026-10-05")
+    assert "Returning" in seeded.get(second).text
+    assert "1 other request(s) on record" in seeded.get(second).text
+
+
+def test_the_ict_form_end_date_survives_the_whole_paste_to_save_flow(seeded):
+    """End-to-end guard on the date bug: parse -> preview -> saved request."""
+    ids = _resource_ids(seeded)
+    email = (
+        "Response ID: ICT-999-STD\n"
+        "Date: 2026-09-14\n"
+        "End Date (Consecutive Booking only): 2026-09-25\n"
+        'Session: ["AM Session, 3.5 hours (08.30 - 12.00)"]\n'
+        "Name: Ding Changwen\n"
+        "SID/NetID: 25104512r\n"
+        "Remarks (if any): Prefer UR10e (05).\n"
+    )
+    preview = seeded.post("/requests/parse", data={"raw_text": email})
+    assert 'value="2026-09-14"' in preview.text
+    assert 'value="2026-09-25"' in preview.text
+
+    url = created_request_url(
+        submit(
+            seeded,
+            "/requests",
+            {
+                "name": "Ding Changwen", "sid_netid": "25104512r",
+                "response_id": "ICT-999-STD", "start_date": "2026-09-14",
+                "end_date": "2026-09-25", "sessions": ["AM"],
+                "preferred_resource_id": str(ids["UR10e (05)"]), "action": "save",
+            },
+        )
+    )
+    assert "25 Sep 2026" in seeded.get(url).text
+
+
+# --- hand-back dates on the availability panel ------------------------------
+
+def test_check_availability_lists_blocked_dates_and_a_return_by_date(seeded):
+    """Checking a clashing robot must say when the robot has to come back."""
+    ids = _resource_ids(seeded)
+    for day in ("2026-09-15", "2026-09-16"):
+        submit(
+            seeded,
+            "/reservations",
+            {
+                "resource_id": str(ids["UR10e (01)"]), "source_type": "LESSON",
+                "title": "ME3101", "start_at": f"{day}T09:30", "end_at": f"{day}T12:20",
+            },
+        )
+    url = _pending(
+        seeded, ids, response_id="R-HANDBACK", start_date="2026-09-14",
+        end_date="2026-09-18", sessions=["AM"],
+        preferred_resource_id=str(ids["UR10e (01)"]),
+    )
+
+    page = seeded.post(f"{url}/check", data={"resource_id": str(ids["UR10e (01)"])}).text
+
+    assert "Dates to hand the robot back" in page
+    assert "15–16 Sep 2026" in page            # consecutive days merged
+    assert "Mon 14 Sep 2026" in page           # return by the day before
+    assert "Message for the applicant" in page
+    assert "Dear DING Changwen," in page
+    assert "reserved for our lesson on 15–16 Sep 2026 (AM)." in page
+    assert "restore the robot to its original state before our lesson begins" in page
+
+
+def test_an_available_check_shows_no_hand_back_table(seeded):
+    ids = _resource_ids(seeded)
+    url = _pending(seeded, ids, response_id="R-CLEAR", start_date="2026-10-12",
+                   end_date="2026-10-12", sessions=["AM"],
+                   preferred_resource_id=str(ids["UR10e (02)"]))
+    page = seeded.post(f"{url}/check", data={"resource_id": str(ids["UR10e (02)"])}).text
+    assert "AVAILABLE" in page
+    assert "Dates to hand the robot back" not in page
+    assert "Message for the applicant" not in page

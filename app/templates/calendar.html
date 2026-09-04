@@ -92,10 +92,11 @@
                   <span class="out-tag">Out</span>
                 {% endif %}
                 {% for reservation in cell.reservations %}
-                  <button type="button" class="ev ev-{{ reservation.source_type }}"
+                  <button type="button"
+                          class="ev ev-{{ reservation.source_type }} {{ 'ev-clash' if reservation.has_clash }}"
                           onclick="openReservation({{ reservation.id }})"
-                          title="{{ reservation.title }} — {{ reservation.type_label }}">
-                    <strong>{{ reservation.title }}</strong>
+                          title="{{ reservation.title }} — {{ reservation.type_label }}{% if reservation.has_clash %} · {{ reservation.conflict_note }}{% endif %}">
+                    <strong>{% if reservation.has_clash %}⚠ {% endif %}{{ reservation.title }}</strong>
                     <span>{{ reservation.short_label }}</span>
                   </button>
                 {% endfor %}
@@ -113,6 +114,7 @@
   <span><span class="swatch" style="background:var(--lesson-bg);border-color:var(--lesson-border)"></span>Lesson</span>
   <span><span class="swatch" style="background:var(--maint-bg);border-color:var(--maint-border)"></span>Maintenance</span>
   <span><span class="swatch" style="background:var(--block-bg);border-color:var(--block-border)"></span>Out of service / block</span>
+  <span><span class="swatch ev-clash" style="background:var(--warn-bg)"></span>⚠ shared session</span>
   <span class="muted">· AM 08:30–12:00 · PM 13:30–17:00</span>
 </div>
 {% endif %}

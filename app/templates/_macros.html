@@ -19,3 +19,42 @@
 {% macro dt(value, fmt='%Y-%m-%d %H:%M') -%}
   {{ value.strftime(fmt) if value else '—' }}
 {%- endmacro %}
+
+{# Is this applicant already in the records? — SPEC 9.4 #}
+{% macro history_banner(history, name) -%}
+  {% if history.is_known %}
+    {% set last = history.last_request %}
+    <div class="msg msg-ok">
+      <strong>Returning applicant.</strong>
+      {{ history.applicant.name }}
+      {%- if history.applicant.sid_netid %} ({{ history.applicant.sid_netid }}){% endif %}
+      is already on record — {{ history.summary }}
+      {% if last %}
+        Most recent: <a href="/requests/{{ last.id }}">#{{ last.id }}</a>,
+        {{ last.start_date.strftime('%d %b %Y') }}–{{ last.end_date.strftime('%d %b %Y') }}
+        ({{ last.status|lower }}).
+      {% endif %}
+      {% if history.matched_on == 'name' %}
+        <br><span class="muted">Matched by name only — the SID/NetID on this email does
+        not match any record, so confirm it is the same person.</span>
+      {% endif %}
+      <a class="btn btn-sm" href="/applicants/{{ history.applicant.id }}"
+         style="margin-left: 6px;">Full history</a>
+    </div>
+  {% else %}
+    <div class="msg msg-warn">
+      <strong>First-time applicant.</strong>
+      {{ name or 'This person' }} has no booking history here — nothing to check against.
+    </div>
+  {% endif %}
+  {% if history.same_name %}
+    <div class="msg msg-warn">
+      <strong>{{ history.same_name|length }} other record(s) share this name.</strong>
+      Check you have the right person:
+      {% for other in history.same_name %}
+        <a href="/applicants/{{ other.id }}">{{ other.name }}
+          ({{ other.sid_netid or 'no SID' }})</a>{{ ', ' if not loop.last }}
+      {% endfor %}
+    </div>
+  {% endif %}
+{%- endmacro %}

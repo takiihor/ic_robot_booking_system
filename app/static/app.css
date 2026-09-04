@@ -190,6 +190,14 @@ td.slot.free:hover { background: #eef3fa; }
 .ev-LESSON { background: var(--lesson-bg); color: var(--lesson-fg); border-color: var(--lesson-border); }
 .ev-MAINTENANCE { background: var(--maint-bg); color: var(--maint-fg); border-color: var(--maint-border); }
 .ev-BLOCK { background: var(--block-bg); color: var(--block-fg); border-color: var(--block-border); }
+/* Knowingly booked over an existing entry (SPEC 11.8) — striped, warning border. */
+.ev-clash {
+  border-color: var(--warn-fg);
+  border-style: dashed;
+  background-image: repeating-linear-gradient(
+    135deg, transparent 0 5px, rgba(138, 90, 18, 0.13) 5px 10px
+  );
+}
 tr.res-out td.slot { background: repeating-linear-gradient(
     45deg, #eceef1, #eceef1 6px, #e2e5e9 6px, #e2e5e9 12px); }
 .out-tag { font-size: 10.5px; color: var(--block-fg); padding: 3px 5px; display: block; }
@@ -271,3 +279,9 @@ details.raw pre { background: #f7f8fa; border: 1px solid var(--border); border-r
   .topbar form.quicksearch { margin-left: 0; width: 100%; }
   main { padding: 14px; }
 }
+
+/* Hand-back dates on the availability panel (SPEC 10.6). */
+.blocked-days { margin-top: 4px; }
+.blocked-days td:last-child { color: var(--err-fg); }
+#applicant-message { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; background: var(--warn-bg); border-color: var(--warn-border); }

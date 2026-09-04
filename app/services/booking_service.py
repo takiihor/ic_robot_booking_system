@@ -49,22 +49,37 @@ def upsert_applicant(
     department: str | None = None,
     email: str | None = None,
     phone: str | None = None,
+    current: Applicant | None = None,
 ) -> Applicant:
-    """Reuse the applicant with this SID/NetID rather than duplicating them."""
-    applicant: Applicant | None = None
+    """Reuse the applicant with this SID/NetID rather than duplicating them.
+
+    `current` is the applicant a request is already attached to. Passing it
+    switches this from "find or create" to "correct in place": a typo fixed in
+    the SID/NetID field moves onto the existing record instead of forking a
+    second applicant and splitting that person's booking history. The request
+    only moves to a different applicant when the new SID/NetID already belongs
+    to one — i.e. when staff are fixing who the booking is actually for.
+    """
     sid = (sid_netid or "").strip() or None
+    applicant: Applicant | None = None
     if sid:
         applicant = db.scalar(select(Applicant).where(Applicant.sid_netid == sid))
-    if applicant is None and not sid:
-        applicant = db.scalar(
-            select(Applicant)
-            .where(Applicant.sid_netid.is_(None))
-            .where(Applicant.name == name.strip())
-        )
 
     if applicant is None:
-        applicant = Applicant(name=name.strip(), sid_netid=sid)
-        db.add(applicant)
+        if current is not None:
+            applicant = current
+            if sid:
+                applicant.sid_netid = sid
+        else:
+            if not sid:
+                applicant = db.scalar(
+                    select(Applicant)
+                    .where(Applicant.sid_netid.is_(None))
+                    .where(Applicant.name == name.strip())
+                )
+            if applicant is None:
+                applicant = Applicant(name=name.strip(), sid_netid=sid)
+                db.add(applicant)
 
     applicant.name = name.strip() or applicant.name
     for attr, value in (
@@ -104,6 +119,32 @@ def validate_request_fields(
     return errors
 
 
+#: Statuses that no longer hold a Response ID against a new entry.
+CLOSED_STATUSES = (RequestStatus.CANCELLED, RequestStatus.REJECTED)
+
+
+def response_id_errors(
+    db: Session, response_id: str | None, request: BookingRequest | None = None
+) -> list[str]:
+    """Response IDs are unique among *live* requests only.
+
+    A cancelled or rejected request keeps its Response ID for the audit trail
+    but stops reserving it, so staff can re-enter the same application without
+    having to blank the field and lose the link back to the Teams form.
+    """
+    if not response_id:
+        return []
+    clash = db.scalar(
+        select(BookingRequest)
+        .where(BookingRequest.response_id == response_id)
+        .where(BookingRequest.status.not_in(CLOSED_STATUSES))
+        .order_by(BookingRequest.id)
+    )
+    if clash is None or (request is not None and clash.id == request.id):
+        return []
+    return [f"Response ID {response_id} is already used by live request #{clash.id}."]
+
+
 # --------------------------------------------------------------------------
 # Create / update
 # --------------------------------------------------------------------------
@@ -129,20 +170,75 @@ def save_request(
     remarks: str | None,
     raw_text: str | None = None,
 ) -> BookingRequest:
-    """Create or update a pending booking request from preview form data."""
+    """Create or edit a *pending* booking request from preview form data.
+
+    An approved request must go through `amend_request` instead: editing one
+    here would leave its reservations sitting on the old dates.
+    """
+    if request is not None and request.status != RequestStatus.PENDING:
+        raise ValidationError(
+            [
+                f"Only pending requests can be edited directly (this one is "
+                f"{request.status}). Amend the approved booking or reopen it first."
+            ]
+        )
+
+    response_id = (response_id or "").strip() or None
     errors = validate_request_fields(
         name=name, start_date=start_date, end_date=end_date, sessions=sessions
     )
-    response_id = (response_id or "").strip() or None
-    if response_id:
-        clash = db.scalar(
-            select(BookingRequest).where(BookingRequest.response_id == response_id)
-        )
-        if clash and (request is None or clash.id != request.id):
-            errors.append(f"Response ID {response_id} already exists (request #{clash.id}).")
+    errors += response_id_errors(db, response_id, request)
     if errors:
         raise ValidationError(errors)
 
+    if request is None:
+        request = BookingRequest(status=RequestStatus.PENDING)
+
+    _apply_fields(
+        db,
+        request,
+        name=name,
+        sid_netid=sid_netid,
+        department=department,
+        email=email,
+        phone=phone,
+        response_id=response_id,
+        facility=facility,
+        booking_type=booking_type,
+        start_date=start_date,
+        end_date=end_date,
+        sessions=sessions,
+        preferred_resource_id=preferred_resource_id,
+        assigned_resource_id=assigned_resource_id,
+        purpose=purpose,
+        remarks=remarks,
+        raw_text=raw_text,
+    )
+    return request
+
+
+def _apply_fields(
+    db: Session,
+    request: BookingRequest,
+    *,
+    name: str,
+    sid_netid: str | None,
+    department: str | None,
+    email: str | None,
+    phone: str | None,
+    response_id: str | None,
+    facility: str | None,
+    booking_type: str | None,
+    start_date: date | None,
+    end_date: date | None,
+    sessions: list[str],
+    preferred_resource_id: int | None,
+    assigned_resource_id: int | None = None,
+    purpose: str | None,
+    remarks: str | None,
+    raw_text: str | None = None,
+) -> None:
+    """Write validated form values onto a request. No status or slot logic."""
     applicant = upsert_applicant(
         db,
         name=name,
@@ -150,13 +246,10 @@ def save_request(
         department=department,
         email=email,
         phone=phone,
+        current=request.applicant if request.applicant_id else None,
     )
-
-    if request is None:
-        request = BookingRequest(applicant_id=applicant.id, status=RequestStatus.PENDING)
-        db.add(request)
-
     request.applicant_id = applicant.id
+    db.add(request)  # no-op when the request is already persistent
     request.response_id = response_id
     request.facility = (facility or "").strip() or None
     request.booking_type = (booking_type or "").strip() or None
@@ -171,7 +264,6 @@ def save_request(
     if raw_text is not None:
         request.raw_text = raw_text
     db.flush()
-    return request
 
 
 # --------------------------------------------------------------------------
@@ -179,9 +271,20 @@ def save_request(
 # --------------------------------------------------------------------------
 
 def approve_request(
-    db: Session, request: BookingRequest, resource_id: int | None
+    db: Session,
+    request: BookingRequest,
+    resource_id: int | None,
+    *,
+    allow_conflicts: bool = False,
+    conflict_note: str | None = None,
 ) -> list[Reservation]:
-    """Approve a request: re-check conflicts, then write one row per slot."""
+    """Approve a request: re-check conflicts, then write one row per slot.
+
+    `allow_conflicts` is the deliberate override (SPEC 11.8): the robot is still
+    lent out, and every clashing slot is stamped with a note saying what it
+    shares the session with. An Out of Service robot is never overridable — it
+    physically cannot be handed over.
+    """
     errors: list[str] = []
     if request.status not in (RequestStatus.PENDING,):
         errors.append(f"Only pending requests can be approved (this one is {request.status}).")
@@ -198,21 +301,61 @@ def approve_request(
     if not slots:
         raise ValidationError(["This request has no bookable sessions."])
 
-    # SPEC 10.5 — re-check immediately before writing.
-    report = av.build_report(
-        db, slots, resource, exclude_request_id=request.id, include_alternatives=False
+    report = _recheck(db, request, resource, slots, "Approval", allow_conflicts=allow_conflicts)
+    created = _write_reservations(db, request, resource, slots, report, conflict_note)
+
+    request.assigned_resource_id = resource.id
+    request.status = RequestStatus.APPROVED
+    request.decided_at = utcnow()
+    db.flush()
+    clashes = sum(1 for r in created if r.conflict_note)
+    log.info(
+        "Request %s approved on %s (%d reservations, %d over existing entries)",
+        request.id,
+        resource.name,
+        len(created),
+        clashes,
     )
-    if report.status != av.AVAILABLE:
-        conflicting = [s.slot.label for s in report.preferred.slots if not s.available]
-        log.warning(
-            "Approval blocked for request %s on %s: %s", request.id, resource.name, conflicting
-        )
-        raise ValidationError(
-            [
-                f"{resource.name} is no longer free for: {', '.join(conflicting)}. "
-                "Re-run Check Availability."
-            ]
-        )
+    return created
+
+
+def _clash_note(slot_result: av.SlotResult, staff_note: str | None) -> str | None:
+    """Human-readable record of what this slot was knowingly booked over."""
+    if slot_result.available:
+        return None
+    parts = [
+        f'{c.short_label} "{c.title}" '
+        f'{c.start_at.strftime("%H:%M")}-{c.end_at.strftime("%H:%M")}'
+        for c in slot_result.conflicts
+    ]
+    note = "Shares this session with " + "; ".join(parts) + "."
+    if any(c.source_type == SourceType.LESSON for c in slot_result.conflicts):
+        note += " The robot must be back before the lesson starts."
+    staff_note = (staff_note or "").strip()
+    if staff_note:
+        note += f" {staff_note}"
+    return note
+
+
+def _write_reservations(
+    db: Session,
+    request: BookingRequest,
+    resource: Resource,
+    slots: list[av.Slot],
+    report: av.AvailabilityReport | None = None,
+    staff_note: str | None = None,
+) -> list[Reservation]:
+    """One ACTIVE BOOKING reservation per requested slot.
+
+    When `report` shows a slot was booked over something, that reservation is
+    stamped with a conflict note so the calendar can flag the day.
+    """
+    notes: dict[tuple[datetime, datetime], str | None] = {}
+    if report is not None and report.preferred is not None:
+        notes = {
+            (s.slot.start_at, s.slot.end_at): _clash_note(s, staff_note)
+            for s in report.preferred.slots
+        }
 
     applicant = request.applicant
     details = "\n".join(
@@ -230,22 +373,141 @@ def approve_request(
         reservation = Reservation(
             resource_id=resource.id,
             source_type=SourceType.BOOKING,
-            booking_request_id=request.id,
             title=applicant.name,
             start_at=slot.start_at,
             end_at=slot.end_at,
             status=ReservationStatus.ACTIVE,
             details=details or None,
+            conflict_note=notes.get((slot.start_at, slot.end_at)),
         )
-        db.add(reservation)
+        # Append through the relationship rather than setting the FK by hand, so
+        # request.reservations stays correct in this session — amend_request and
+        # the last-slot cascade both read that collection back.
+        request.reservations.append(reservation)
         created.append(reservation)
+    return created
 
+
+def _recheck(
+    db: Session,
+    request: BookingRequest,
+    resource: Resource,
+    slots: list[av.Slot],
+    action: str,
+    *,
+    allow_conflicts: bool = False,
+) -> av.AvailabilityReport:
+    """SPEC 10.5 — re-run the conflict check against live data before writing.
+
+    Returns the report so the caller can stamp the clashing slots. Conflicts
+    stop the write unless staff explicitly chose to go ahead anyway.
+    """
+    report = av.build_report(
+        db, slots, resource, exclude_request_id=request.id, include_alternatives=False
+    )
+    if report.status == av.AVAILABLE or allow_conflicts:
+        return report
+
+    conflicting = [s.slot.label for s in report.preferred.slots if not s.available]
+    log.warning("%s blocked for request %s on %s: %s", action, request.id, resource.name, conflicting)
+    raise ValidationError(
+        [
+            f"{resource.name} is not free for: {', '.join(conflicting)}. "
+            "Re-run Check Availability, pick another robot, or use “Accept anyway” "
+            "to lend it out over the clash."
+        ]
+    )
+
+
+def amend_request(
+    db: Session,
+    request: BookingRequest,
+    *,
+    resource_id: int | None,
+    name: str,
+    sid_netid: str | None,
+    department: str | None,
+    email: str | None,
+    phone: str | None,
+    response_id: str | None,
+    facility: str | None,
+    booking_type: str | None,
+    start_date: date | None,
+    end_date: date | None,
+    sessions: list[str],
+    preferred_resource_id: int | None,
+    purpose: str | None,
+    remarks: str | None,
+    allow_conflicts: bool = False,
+    conflict_note: str | None = None,
+) -> list[Reservation]:
+    """Edit an approved booking and rebuild its reservations to match.
+
+    Without this the only way to fix an approved booking is to cancel it and
+    retype the whole application. The old slots are released and new ones
+    written in one transaction, so the calendar never disagrees with the
+    request it came from.
+    """
+    if request.status != RequestStatus.APPROVED:
+        raise ValidationError(
+            [f"Only approved bookings can be amended (this one is {request.status})."]
+        )
+
+    response_id = (response_id or "").strip() or None
+    errors = validate_request_fields(
+        name=name, start_date=start_date, end_date=end_date, sessions=sessions
+    )
+    errors += response_id_errors(db, response_id, request)
+
+    resource = db.get(Resource, resource_id) if resource_id else request.assigned_resource
+    if resource is None:
+        errors.append("A robot must be assigned to the amended booking.")
+    elif resource.status != ResourceStatus.ACTIVE:
+        errors.append(f"{resource.name} is {resource.status} and cannot be booked.")
+    if errors:
+        raise ValidationError(errors)
+
+    _apply_fields(
+        db,
+        request,
+        name=name,
+        sid_netid=sid_netid,
+        department=department,
+        email=email,
+        phone=phone,
+        response_id=response_id,
+        facility=facility,
+        booking_type=booking_type,
+        start_date=start_date,
+        end_date=end_date,
+        sessions=sessions,
+        preferred_resource_id=preferred_resource_id,
+        purpose=purpose,
+        remarks=remarks,
+    )
+
+    slots = av.slots_for_request(request)
+    if not slots:
+        raise ValidationError(["This request has no bookable sessions."])
+    report = _recheck(
+        db, request, resource, slots, "Amendment", allow_conflicts=allow_conflicts
+    )
+
+    released = 0
+    for reservation in request.reservations:
+        if reservation.status == ReservationStatus.ACTIVE:
+            reservation.status = ReservationStatus.CANCELLED
+            released += 1
+
+    created = _write_reservations(db, request, resource, slots, report, conflict_note)
     request.assigned_resource_id = resource.id
-    request.status = RequestStatus.APPROVED
-    request.decided_at = utcnow()
     db.flush()
     log.info(
-        "Request %s approved on %s (%d reservations)", request.id, resource.name, len(created)
+        "Request %s amended on %s (%d released, %d written)",
+        request.id,
+        resource.name,
+        released,
+        len(created),
     )
     return created
 
@@ -280,6 +542,30 @@ def cancel_request(db: Session, request: BookingRequest, reason: str | None = No
     return request
 
 
+def reopen_request(db: Session, request: BookingRequest) -> BookingRequest:
+    """Put a cancelled or rejected request back into PENDING.
+
+    A wrong decision used to be unrecoverable — the record was frozen and the
+    application had to be retyped. Reopening keeps the same record (and its
+    history) and returns it to the normal approve/reject flow. The released
+    reservations stay cancelled; approving again writes fresh ones.
+    """
+    if request.status not in CLOSED_STATUSES:
+        raise ValidationError(
+            [f"Only cancelled or rejected requests can be reopened (this one is {request.status})."]
+        )
+    errors = response_id_errors(db, request.response_id, request)
+    if errors:
+        raise ValidationError(errors)
+
+    request.status = RequestStatus.PENDING
+    request.decided_at = None
+    request.rejection_reason = None
+    db.flush()
+    log.info("Request %s reopened as pending", request.id)
+    return request
+
+
 # --------------------------------------------------------------------------
 # Search — SPEC 16
 # --------------------------------------------------------------------------
@@ -304,6 +590,93 @@ def search_requests(db: Session, query: str) -> list[BookingRequest]:
         .order_by(BookingRequest.start_date.desc())
     )
     return list(db.scalars(stmt))
+
+
+@dataclass
+class ApplicantHistory:
+    """Whether the person on a pasted email has been here before (SPEC 9.4)."""
+
+    applicant: Applicant | None = None
+    matched_on: str = ""  # "sid" | "name"
+    requests: list[BookingRequest] = None  # type: ignore[assignment]
+    same_name: list[Applicant] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.requests is None:
+            self.requests = []
+        if self.same_name is None:
+            self.same_name = []
+
+    @property
+    def is_known(self) -> bool:
+        return self.applicant is not None
+
+    @property
+    def total(self) -> int:
+        return len(self.requests)
+
+    def count(self, status: str) -> int:
+        return sum(1 for r in self.requests if r.status == status)
+
+    @property
+    def last_request(self) -> BookingRequest | None:
+        """Most recent booking by start date."""
+        return max(self.requests, key=lambda r: r.start_date, default=None)
+
+    @property
+    def summary(self) -> str:
+        if not self.is_known:
+            return "No previous booking on record."
+        parts = [f"{self.total} previous request{'s' if self.total != 1 else ''}"]
+        for status in (RequestStatus.APPROVED, RequestStatus.CANCELLED, RequestStatus.REJECTED):
+            found = self.count(status)
+            if found:
+                parts.append(f"{found} {status.lower()}")
+        return ", ".join(parts) + "."
+
+
+def lookup_applicant_history(
+    db: Session, *, name: str | None, sid_netid: str | None
+) -> ApplicantHistory:
+    """Find this applicant's booking history before the request is saved.
+
+    SID/NetID is authoritative; the name is a fallback so a returning student is
+    still recognised when the form omitted their ID. `same_name` reports other
+    people sharing the name so staff can spot a mix-up.
+    """
+    sid = (sid_netid or "").strip() or None
+    cleaned_name = (name or "").strip()
+
+    applicant: Applicant | None = None
+    matched_on = ""
+    if sid:
+        applicant = db.scalar(select(Applicant).where(Applicant.sid_netid == sid))
+        if applicant is not None:
+            matched_on = "sid"
+
+    by_name: list[Applicant] = []
+    if cleaned_name:
+        by_name = list(
+            db.scalars(select(Applicant).where(Applicant.name.ilike(cleaned_name)))
+        )
+    if applicant is None and by_name:
+        applicant = by_name[0]
+        matched_on = "name"
+
+    history = ApplicantHistory(
+        applicant=applicant,
+        matched_on=matched_on,
+        same_name=[a for a in by_name if applicant is None or a.id != applicant.id],
+    )
+    if applicant is not None:
+        history.requests = list(
+            db.scalars(
+                select(BookingRequest)
+                .where(BookingRequest.applicant_id == applicant.id)
+                .order_by(BookingRequest.start_date.desc())
+            )
+        )
+    return history
 
 
 def search_applicants(db: Session, query: str) -> list[Applicant]:
@@ -476,8 +849,26 @@ def create_manual_reservation(
 
 
 def cancel_reservation(db: Session, reservation: Reservation) -> Reservation:
-    """Cancel a single reservation, keeping it in history (SPEC 11.3)."""
+    """Cancel a single reservation, keeping it in history (SPEC 11.3).
+
+    Releasing one slot of an approved booking is allowed: staff needed a way to
+    hand back a single day without cancelling the whole request and re-entering
+    the rest. When the last active slot goes, the request follows it to
+    CANCELLED so the list and the calendar agree.
+    """
+    if reservation.status != ReservationStatus.ACTIVE:
+        raise ValidationError(["This entry is already cancelled."])
+
     reservation.status = ReservationStatus.CANCELLED
     db.flush()
+
+    request = reservation.booking_request
+    if request is not None and request.status == RequestStatus.APPROVED:
+        if not any(r.status == ReservationStatus.ACTIVE for r in request.reservations):
+            request.status = RequestStatus.CANCELLED
+            request.decided_at = utcnow()
+            db.flush()
+            log.info("Request %s cancelled — its last slot was released", request.id)
+
     log.info("Reservation %s cancelled", reservation.id)
     return reservation

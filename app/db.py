@@ -45,7 +45,9 @@ def get_db() -> Iterator[Session]:
 
 
 def init_db() -> None:
+    from app.migrations import run_migrations
     from app.models import Base  # imported here so models register their tables
 
     Base.metadata.create_all(engine)
+    run_migrations(engine)
     log.info("Database ready at %s", DATABASE_URL)

@@ -174,3 +174,125 @@ def test_check_request_ignores_the_requests_own_reservations(db, robots, make_re
 
     report = av.check_request(db, booking, robots[0])
     assert report.status == av.AVAILABLE
+
+
+# --- which dates are blocked, and when the robot must come back (SPEC 10.6) ---
+
+def _availability(db, resource, start, end, sessions=("AM", "PM")):
+    slots = av.expand_slots(date.fromisoformat(start), date.fromisoformat(end), list(sessions))
+    return av.check_resource(db, resource, slots)
+
+
+def test_blocked_periods_merge_consecutive_days_into_one_return_date(db, robots, make_reservation):
+    for day in ("2026-09-14", "2026-09-15", "2026-09-16"):
+        make_reservation(robots[0], f"{day}T09:30", f"{day}T12:20", title="ME3101")
+
+    periods = av.blocked_periods(_availability(db, robots[0], "2026-09-14", "2026-09-18"))
+
+    assert len(periods) == 1
+    period = periods[0]
+    assert (period.start, period.end) == (date(2026, 9, 14), date(2026, 9, 16))
+    # one hand-back date for the whole run, not one per day
+    assert period.return_by == date(2026, 9, 13)
+    assert period.sessions == ["AM"]
+    assert period.reasons == ['Lesson "ME3101"']
+
+
+def test_non_consecutive_blocks_get_their_own_return_date(db, robots, make_reservation):
+    make_reservation(robots[0], "2026-09-14T09:30", "2026-09-14T12:20", title="ME3101")
+    make_reservation(robots[0], "2026-09-21T09:30", "2026-09-21T12:20", title="ME3102")
+
+    periods = av.blocked_periods(_availability(db, robots[0], "2026-09-14", "2026-09-25"))
+
+    assert [p.return_by for p in periods] == [date(2026, 9, 13), date(2026, 9, 20)]
+    assert all(p.is_single_day for p in periods)
+
+
+def test_both_sessions_of_one_day_collapse_to_a_single_row(db, robots, make_reservation):
+    make_reservation(robots[0], "2026-09-14T08:00", "2026-09-14T18:00", title="Calibration",
+                     source_type=SourceType.MAINTENANCE)
+
+    periods = av.blocked_periods(_availability(db, robots[0], "2026-09-14", "2026-09-14"))
+
+    assert len(periods) == 1
+    assert periods[0].sessions == ["AM", "PM"]
+    assert periods[0].reasons == ['Maintenance "Calibration"']
+
+
+def test_no_conflicts_means_no_periods_and_no_message(db, robots):
+    availability = _availability(db, robots[0], "2026-09-14", "2026-09-16")
+    periods = av.blocked_periods(availability)
+    assert periods == []
+    assert av.unavailable_message(availability, periods) == ""
+
+
+def test_the_applicant_message_uses_the_lab_wording_with_the_dates_filled_in(
+    db, robots, make_reservation
+):
+    for day in ("2026-09-14", "2026-09-15"):
+        make_reservation(robots[0], f"{day}T09:30", f"{day}T12:20", title="ME3101")
+    make_reservation(robots[0], "2026-09-21T09:30", "2026-09-21T12:20", title="ME3102")
+
+    availability = _availability(db, robots[0], "2026-09-14", "2026-09-25")
+    message = av.unavailable_message(
+        availability, av.blocked_periods(availability), applicant_name="Ding Changwen"
+    )
+
+    assert "Dear Ding Changwen," in message
+    assert (
+        "Please note that the robot will be reserved for our lesson on "
+        "14–15 Sep 2026 (AM) and Mon 21 Sep 2026 (AM)." in message
+    )
+    assert (
+        "As a reminder, you are required to restore the robot to its original state "
+        "before our lesson begins. Once this booking period has concluded, you are "
+        "welcome to collect the robot again for your own use." in message
+    )
+
+
+def test_three_blocked_runs_are_listed_with_commas_and_a_final_and(
+    db, robots, make_reservation
+):
+    for day in ("2026-09-14", "2026-09-21", "2026-09-28"):
+        make_reservation(robots[0], f"{day}T09:30", f"{day}T12:20", title="ME3101")
+
+    availability = _availability(db, robots[0], "2026-09-14", "2026-09-30")
+    message = av.unavailable_message(availability, av.blocked_periods(availability))
+
+    assert (
+        "reserved for our lesson on Mon 14 Sep 2026 (AM), Mon 21 Sep 2026 (AM) "
+        "and Mon 28 Sep 2026 (AM)." in message
+    )
+
+
+def test_a_non_lesson_clash_does_not_claim_to_be_a_lesson(db, robots, make_reservation):
+    """"our lesson" would be a lie when the robot is out for maintenance."""
+    make_reservation(robots[0], "2026-09-14T08:00", "2026-09-14T18:00",
+                     title="Annual calibration", source_type=SourceType.MAINTENANCE)
+
+    availability = _availability(db, robots[0], "2026-09-14", "2026-09-14")
+    message = av.unavailable_message(availability, av.blocked_periods(availability))
+
+    assert "our lesson" not in message
+    assert 'Maintenance "Annual calibration"' in message
+    assert "before that period begins" in message
+
+
+def test_a_mixed_clash_falls_back_to_the_neutral_wording(db, robots, make_reservation):
+    make_reservation(robots[0], "2026-09-14T09:30", "2026-09-14T12:20", title="ME3101")
+    make_reservation(robots[0], "2026-09-21T08:00", "2026-09-21T18:00",
+                     title="Annual calibration", source_type=SourceType.MAINTENANCE)
+
+    availability = _availability(db, robots[0], "2026-09-14", "2026-09-25")
+    message = av.unavailable_message(availability, av.blocked_periods(availability))
+
+    assert "our lesson" not in message
+    assert 'Lesson "ME3101"' in message
+    assert 'Maintenance "Annual calibration"' in message
+
+
+def test_an_out_of_service_robot_yields_no_hand_back_dates(db, robots):
+    """The robot cannot be lent out at all, so there is nothing to hand back."""
+    availability = _availability(db, robots[3], "2026-09-14", "2026-09-16")
+    assert availability.status == av.OUT_OF_SERVICE
+    assert av.blocked_periods(availability) == []

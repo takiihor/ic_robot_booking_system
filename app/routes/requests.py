@@ -191,6 +191,9 @@ async def parse_request(request: Request, db: Session = Depends(get_db)):
             "parsed": True,
             "warnings": parsed.warnings,
             "flagged": flagged,
+            "history": svc.lookup_applicant_history(
+                db, name=payload["name"], sid_netid=payload["sid_netid"]
+            ),
         },
     )
 
@@ -235,6 +238,9 @@ async def create_request(request: Request, db: Session = Depends(get_db)):
                 "warnings": [],
                 "errors": exc.errors,
                 "flagged": set(),
+                "history": svc.lookup_applicant_history(
+                    db, name=payload["name"], sid_netid=payload["sid_netid"]
+                ),
             },
         )
 
@@ -256,6 +262,16 @@ def _load(db: Session, request_id: int) -> BookingRequest | None:
 def _detail_context(
     db: Session, booking: BookingRequest, report: av.AvailabilityReport | None
 ) -> dict:
+    # Blocked days grouped into runs, plus a note staff can send the applicant
+    # telling them when to hand the robot back (SPEC 10.6).
+    periods: list[av.BlockedPeriod] = []
+    message = ""
+    if report is not None and report.preferred is not None:
+        periods = av.blocked_periods(report.preferred)
+        message = av.unavailable_message(
+            report.preferred, periods, applicant_name=booking.applicant.name
+        )
+
     return {
         "nav": "requests",
         "req": booking,
@@ -263,6 +279,13 @@ def _detail_context(
         "report": report,
         "AVAILABLE": av.AVAILABLE,
         "OUT_OF_SERVICE": av.OUT_OF_SERVICE,
+        "blocked_periods": periods,
+        "unavailable_message": message,
+        "history": svc.lookup_applicant_history(
+            db,
+            name=booking.applicant.name,
+            sid_netid=booking.applicant.sid_netid,
+        ),
     }
 
 
@@ -299,45 +322,106 @@ async def check_request(request_id: int, request: Request, db: Session = Depends
 
 @router.post("/{request_id}/update", response_class=HTMLResponse)
 async def update_request(request_id: int, request: Request, db: Session = Depends(get_db)):
+    """Edit a pending request, or amend an approved one and rebuild its slots."""
     booking = _load(db, request_id)
     if booking is None:
         return RedirectResponse("/requests?flash=Request+not+found&level=err", status_code=303)
-    if booking.status != RequestStatus.PENDING:
+    if booking.status not in (RequestStatus.PENDING, RequestStatus.APPROVED):
         return RedirectResponse(
-            f"/requests/{request_id}?flash=Only+pending+requests+can+be+edited&level=warn",
+            f"/requests/{request_id}?flash=A+{booking.status}+request+cannot+be+edited"
+            "+—+reopen+it+first&level=warn",
             status_code=303,
         )
 
     form = await request.form()
     payload = _form_payload(form)
+    amending = booking.status == RequestStatus.APPROVED
     try:
-        svc.save_request(
-            db,
-            request=booking,
-            name=payload["name"],
-            sid_netid=payload["sid_netid"],
-            department=payload["department"],
-            email=payload["email"],
-            phone=payload["phone"],
-            response_id=payload["response_id"],
-            facility=payload["facility"],
-            booking_type=payload["booking_type"],
-            start_date=form_date(form, "start_date"),
-            end_date=form_date(form, "end_date"),
-            sessions=payload["sessions"],
-            preferred_resource_id=form_int(form, "preferred_resource_id"),
-            assigned_resource_id=form_int(form, "assigned_resource_id"),
-            purpose=payload["purpose"],
-            remarks=payload["remarks"],
+        if amending:
+            reservations = svc.amend_request(
+                db,
+                booking,
+                resource_id=form_int(form, "assigned_resource_id")
+                or booking.assigned_resource_id,
+                name=payload["name"],
+                sid_netid=payload["sid_netid"],
+                department=payload["department"],
+                email=payload["email"],
+                phone=payload["phone"],
+                response_id=payload["response_id"],
+                facility=payload["facility"],
+                booking_type=payload["booking_type"],
+                start_date=form_date(form, "start_date"),
+                end_date=form_date(form, "end_date"),
+                sessions=payload["sessions"],
+                preferred_resource_id=form_int(form, "preferred_resource_id"),
+                purpose=payload["purpose"],
+                remarks=payload["remarks"],
+                allow_conflicts=bool(form_str(form, "allow_conflicts")),
+                conflict_note=form_str(form, "conflict_note"),
+            )
+        else:
+            svc.save_request(
+                db,
+                request=booking,
+                name=payload["name"],
+                sid_netid=payload["sid_netid"],
+                department=payload["department"],
+                email=payload["email"],
+                phone=payload["phone"],
+                response_id=payload["response_id"],
+                facility=payload["facility"],
+                booking_type=payload["booking_type"],
+                start_date=form_date(form, "start_date"),
+                end_date=form_date(form, "end_date"),
+                sessions=payload["sessions"],
+                preferred_resource_id=form_int(form, "preferred_resource_id"),
+                assigned_resource_id=form_int(form, "assigned_resource_id"),
+                purpose=payload["purpose"],
+                remarks=payload["remarks"],
+            )
+        db.commit()
+    except svc.ValidationError as exc:
+        db.rollback()
+        report = av.check_request(db, booking) if amending else None
+        context = _detail_context(db, booking, report)
+        context["errors"] = exc.errors
+        return render(request, "request_detail.html", context)
+
+    if amending:
+        clashes = sum(1 for r in reservations if r.conflict_note)
+        summary = (
+            f"Booking amended — {len(reservations)} slots rewritten on "
+            f"{booking.assigned_resource.name}."
         )
+        if clashes:
+            summary += f" {clashes} share the robot with an existing entry."
+        return RedirectResponse(
+            f"/requests/{request_id}?flash={quote(summary)}"
+            f"{'&level=warn' if clashes else ''}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/requests/{request_id}?flash=Request+updated", status_code=303)
+
+
+@router.post("/{request_id}/reopen", response_class=HTMLResponse)
+async def reopen(request_id: int, request: Request, db: Session = Depends(get_db)):
+    """Return a cancelled or rejected request to PENDING instead of retyping it."""
+    booking = _load(db, request_id)
+    if booking is None:
+        return RedirectResponse("/requests?flash=Request+not+found&level=err", status_code=303)
+
+    try:
+        svc.reopen_request(db, booking)
         db.commit()
     except svc.ValidationError as exc:
         db.rollback()
         context = _detail_context(db, booking, None)
         context["errors"] = exc.errors
         return render(request, "request_detail.html", context)
-
-    return RedirectResponse(f"/requests/{request_id}?flash=Request+updated", status_code=303)
+    return RedirectResponse(
+        f"/requests/{request_id}?flash=Request+reopened+as+pending", status_code=303
+    )
 
 
 @router.post("/{request_id}/approve", response_class=HTMLResponse)
@@ -348,20 +432,36 @@ async def approve(request_id: int, request: Request, db: Session = Depends(get_d
 
     form = await request.form()
     resource_id = form_int(form, "resource_id") or booking.preferred_resource_id
+    allow_conflicts = bool(form_str(form, "allow_conflicts"))
     try:
-        reservations = svc.approve_request(db, booking, resource_id)
+        reservations = svc.approve_request(
+            db,
+            booking,
+            resource_id,
+            allow_conflicts=allow_conflicts,
+            conflict_note=form_str(form, "conflict_note"),
+        )
         db.commit()
     except svc.ValidationError as exc:
         db.rollback()
         report = av.check_request(db, booking, db.get(Resource, resource_id) if resource_id else None)
         context = _detail_context(db, booking, report)
         context["errors"] = exc.errors
+        context["checked_resource_id"] = resource_id
         return render(request, "request_detail.html", context)
 
-    message = quote(
-        f"Approved — {len(reservations)} slots booked on {booking.assigned_resource.name}."
+    clashes = sum(1 for r in reservations if r.conflict_note)
+    summary = f"Approved — {len(reservations)} slots booked on {booking.assigned_resource.name}."
+    if clashes:
+        summary += (
+            f" {clashes} of them share the robot with an existing entry — see the flagged "
+            "days below."
+        )
+    return RedirectResponse(
+        f"/requests/{request_id}?flash={quote(summary)}"
+        f"{'&level=warn' if clashes else ''}",
+        status_code=303,
     )
-    return RedirectResponse(f"/requests/{request_id}?flash={message}", status_code=303)
 
 
 @router.post("/{request_id}/reject", response_class=HTMLResponse)

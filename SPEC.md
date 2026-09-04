@@ -382,6 +382,24 @@ No LLM dependency is required for v1.
 
 ## 9.3 Parsed Preview
 
+Labels may carry a parenthetical qualifier — the ICT form sends
+`End Date (Consecutive Booking only)` and `Remarks (if any)`. Bracketed qualifiers are
+ignored when matching a label, so the field is still recognised.
+
+When no end-date label is recognised the end date defaults to the start date. If the
+start-date section contains a second date, an unrecognised label swallowed it: warn
+instead of silently booking a single day.
+
+## 9.4 Applicant History on the Preview
+
+The preview states whether the applicant is already on record, so staff can judge a
+request before approving it:
+
+- matched on SID/NetID first, falling back to the name;
+- shows how many previous requests exist and how they ended, plus the most recent one;
+- says explicitly when there is no history at all;
+- warns when the match was by name only, or when other records share the name.
+
 After parsing, show editable fields:
 
 - Response ID
@@ -507,6 +525,34 @@ This prevents approving a request based on stale availability.
 
 ---
 
+## 10.6 Hand-Back Dates
+
+When a check finds conflicts, list the unavailable dates and say when the robot must be
+returned.
+
+- Consecutive unavailable days are merged into one run, so one hand-back date is given per
+  run, not one per day.
+- The hand-back date is the day before the run starts.
+- Both sessions of the same day collapse into one row.
+- An Out of Service robot produces no hand-back dates: it cannot be lent out at all.
+
+Also produce a plain-text message staff can send the applicant. The standard wording is:
+
+```text
+Please note that the robot will be reserved for our lesson on <dates>.
+
+As a reminder, you are required to restore the robot to its original state before our
+lesson begins. Once this booking period has concluded, you are welcome to collect the
+robot again for your own use.
+```
+
+`<dates>` is the list of unavailable runs, comma-separated with a final "and". The
+"our lesson" wording is only used when every blocking entry is a lesson; a maintenance
+window, block or other booking gets neutral wording and names what the robot is
+committed to. The return-by date stays in the hand-back table.
+
+---
+
 # 11. Accept / Reject
 
 ## 11.1 Accept
@@ -546,6 +592,58 @@ Cancellation:
 - remains visible in request history.
 
 Do not hard-delete booking history through the normal UI.
+
+## 11.4 Amend Approved Booking
+
+Staff must be able to correct an approved booking without cancelling it and re-entering
+the application.
+
+Amending:
+
+- re-runs the conflict check against live data (as approval does);
+- is refused, leaving the booking untouched, if the robot is no longer free;
+- otherwise marks the current reservations cancelled and writes new ones to match;
+- may move the booking to a different active robot;
+- keeps the request APPROVED and keeps the released rows as history.
+
+## 11.5 Reopen a Closed Request
+
+A cancelled or rejected request can be returned to PENDING.
+
+Reopening:
+
+- keeps the request, its history and its Response ID;
+- clears the decision timestamp and reason;
+- leaves released reservations cancelled — approving again writes new ones;
+- is refused if the Response ID has since been taken by a live request.
+
+## 11.6 Release a Single Reservation
+
+A single slot of an approved booking can be cancelled on its own, leaving the rest of the
+booking active. When the last active slot is released the request becomes CANCELLED.
+
+## 11.7 Response ID Uniqueness
+
+A Response ID is unique among requests that are neither CANCELLED nor REJECTED. Closed
+records keep their Response ID for the audit trail but no longer reserve it, so the same
+application can be re-entered after a cancellation.
+
+## 11.8 Accept Over a Conflict
+
+A conflict informs the decision; it does not veto it. Staff may approve a request whose
+slots clash, because the robot is still lent out and simply has to come back in time.
+
+Accepting over a conflict:
+
+- requires an explicit second action ("Accept anyway"), never the normal Accept;
+- is refused for an Out of Service or Retired robot, which cannot be handed over at all;
+- books every requested slot, including the clashing ones;
+- stamps each clashing reservation with a note naming what it shares the session with,
+  plus an optional free-text instruction from staff;
+- adds "the robot must be back before the lesson starts" when the clash is a lesson;
+- flags those reservations on the calendar and lists the affected days on the request.
+
+Existing reservations are never moved or overwritten. Both entries stay on the calendar.
 
 ---
 
@@ -851,9 +949,13 @@ POST /requests/parse
 POST /requests
 GET  /requests/{id}
 POST /requests/{id}/check
+POST /requests/{id}/update
 POST /requests/{id}/approve
 POST /requests/{id}/reject
 POST /requests/{id}/cancel
+POST /requests/{id}/reopen
+
+POST /reservations/{id}/cancel
 
 GET  /lessons
 POST /lessons/parse

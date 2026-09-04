@@ -143,15 +143,25 @@ def cancel_single_reservation(
     reservation = db.get(Reservation, reservation_id)
     if reservation is None:
         return RedirectResponse("/calendar?flash=Reservation%20not%20found&level=err", 303)
-    if reservation.booking_request_id is not None:
-        message, level = (
-            "This slot belongs to an approved booking — cancel the request instead.",
-            "warn",
-        )
-    else:
+
+    booking = reservation.booking_request
+    try:
         svc.cancel_reservation(db, reservation)
         db.commit()
+    except svc.ValidationError as exc:
+        db.rollback()
+        message, level = "; ".join(exc.errors), "err"
+    else:
         message, level = f"{reservation.title} cancelled.", "ok"
+        if booking is not None:
+            # Releasing one slot of an approved booking no longer forces staff to
+            # cancel the whole request and re-enter the remaining days.
+            remaining = sum(1 for r in booking.reservations if r.status == "ACTIVE")
+            message = (
+                f"Slot released from request #{booking.id} — {remaining} still booked."
+                if remaining
+                else f"Last slot released — request #{booking.id} is now cancelled."
+            )
     separator = "&" if "?" in redirect_to else "?"
     return RedirectResponse(
         f"{redirect_to}{separator}flash={quote(message)}&level={level}", status_code=303

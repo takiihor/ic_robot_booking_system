@@ -1,6 +1,12 @@
 {% from "_macros.html" import status_badge, dt %}
 {% set req = reservation.booking_request %}
 
+{% if reservation.has_clash %}
+  <div class="msg msg-warn" style="margin-top: 0">
+    <strong>Shared session.</strong> {{ reservation.conflict_note }}
+  </div>
+{% endif %}
+
 {% if req %}
   {# SPEC 8.4 — full booking detail #}
   <dl class="kv">
@@ -17,7 +23,10 @@
     <dd>{{ req.start_date.strftime('%d %b %Y') }} – {{ req.end_date.strftime('%d %b %Y') }} ({{ req.sessions|join(' + ') }})</dd>
     <dt>Purpose</dt><dd>{{ req.purpose or '—' }}</dd>
     <dt>Remarks</dt><dd>{{ req.remarks or '—' }}</dd>
-    <dt>Status</dt><dd>{{ status_badge(req.status) }}</dd>
+    <dt>Status</dt>
+    <dd>{{ status_badge(req.status) }}
+      {% if reservation.status != 'ACTIVE' %}<span class="muted">· slot {{ reservation.status }}</span>{% endif %}
+    </dd>
     <dt>Created</dt><dd>{{ dt(req.created_at) }}</dd>
     <dt>Approved</dt><dd>{{ dt(req.decided_at) }}</dd>
   </dl>
@@ -25,6 +34,13 @@
     <a class="btn btn-primary btn-sm" href="/requests/{{ req.id }}">Open full request</a>
     <a class="btn btn-sm" href="/applicants/{{ req.applicant_id }}">Applicant history</a>
   </div>
+  {% if reservation.status == 'ACTIVE' %}
+    <form class="actions" method="post" action="/reservations/{{ reservation.id }}/cancel"
+          onsubmit="return confirm('Release just this slot? The rest of the booking stays, and the request is only cancelled if this was its last slot.')">
+      <input type="hidden" name="redirect_to" value="/calendar?date={{ reservation.start_at.date().isoformat() }}">
+      <button class="btn btn-danger btn-sm" type="submit">Release this slot</button>
+    </form>
+  {% endif %}
 {% else %}
   {# Lesson, maintenance or block #}
   <dl class="kv">

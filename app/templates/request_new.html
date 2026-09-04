@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import history_banner %}
 {% block title %}New Request{% endblock %}
 {% block content %}
 
@@ -33,6 +34,8 @@
   {% else %}
     <div class="msg msg-ok">All fields were parsed. Review them and continue.</div>
   {% endif %}
+
+  {% if history %}{{ history_banner(history, form.name) }}{% endif %}
 
   <form method="post" action="/requests">
     <input type="hidden" name="raw_text" value="{{ form.raw_text }}">

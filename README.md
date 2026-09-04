@@ -165,6 +165,17 @@ reservation is created per robot.
 If an imported lesson would clash with an existing booking, the clash is shown and an
 explicit confirmation is required. Nothing is ever overwritten.
 
+The parser ignores parenthetical qualifiers on labels, so the ICT form's
+`End Date (Consecutive Booking only)` and `Remarks (if any)` are read correctly. If an
+end-date label is not recognised but a second date appears in the start-date section, the
+preview warns rather than quietly booking a single day.
+
+The preview also says whether the applicant is **already on record** — matched on
+SID/NetID, falling back to the name — with a count of their previous requests, how those
+ended, and a link to the most recent one. A first-time applicant is called out as such,
+and so is a match made on name alone or a name shared by more than one record. The request
+page carries the same Returning / First booking marker.
+
 ### Requests, search and history
 
 **Requests** lists everything with status, applicant and date-range filters. The search box
@@ -174,6 +185,71 @@ applicant's page shows their current, upcoming and historical bookings.
 Rejecting or cancelling records the decision and keeps the history. Cancelling an approved
 booking marks its reservations cancelled so the robot is free again, but nothing is
 deleted through the UI.
+
+### Correcting a request
+
+Wrong information never has to be retyped:
+
+- **Pending** — edit the fields and save.
+- **Approved** — the same form becomes **Amend booking**. Saving re-checks availability,
+  releases the current reservations and writes new ones to match, in one step. If the robot
+  is no longer free the amendment is refused and the existing booking is left alone. The
+  assigned robot can be changed here too.
+- **Cancelled or rejected** — **Reopen as Pending** puts the record back into the normal
+  flow, keeping its history and Response ID. Released reservations stay released;
+  approving again writes fresh ones.
+- **One slot only** — **Release** on a reservation (from the request page or the calendar
+  pop-up) hands back a single session and leaves the rest of the booking in place. If it
+  was the last active slot, the request itself is cancelled.
+
+When a check finds conflicts, the panel adds a **Dates to hand the robot back** table and
+a ready-to-send message for the applicant. Consecutive blocked days are merged into one
+run so the student gets a single return-by date per run — the day before the run starts —
+rather than one per day. Both sessions of a day collapse into one row, and an Out of
+Service robot produces no hand-back dates because it cannot be lent out at all.
+
+The message uses the lab's standard notice with the dates filled in:
+
+```text
+Dear Ding Changwen,
+
+Please note that the robot will be reserved for our lesson on 15–17 Sep 2026 (AM)
+and Mon 28 Sep 2026 (AM).
+
+As a reminder, you are required to restore the robot to its original state before our
+lesson begins. Once this booking period has concluded, you are welcome to collect the
+robot again for your own use.
+```
+
+"our lesson" is only claimed when every blocking entry really is a lesson — a maintenance
+window or another booking gets neutral wording and is named explicitly.
+
+### Accepting over a conflict
+
+A conflict is information, not a veto. When the availability panel shows a clash, the
+decision panel gains **Accept anyway** next to the normal Accept. It lends the robot out
+for the whole period and flags only the clashing sessions:
+
+- each flagged reservation records what it shares the session with — e.g. *Shares this
+  session with Lesson "ME3101" 09:30-12:20. The robot must be back before the lesson
+  starts.*
+- you can add your own instruction ("Return by 09:00 to the lab technician") which is
+  appended to every flagged day;
+- the request page lists the days the robot has to be handed back;
+- the calendar draws those blocks striped with a ⚠, and both entries stay visible.
+
+Nothing existing is moved or overwritten. An Out of Service or Retired robot can never be
+overridden — it cannot be handed over at all.
+
+A Response ID is unique among *live* requests only. Cancelled and rejected records keep
+theirs for the audit trail but stop reserving it, so the same application can be entered
+again without blanking the field that links it back to the Teams form.
+
+Applicant name, department and contact details belong to the shared applicant record —
+correcting them on one request updates that person's other bookings too, which the form
+says. Correcting a SID/NetID moves it onto the existing applicant instead of creating a
+second one; entering a SID/NetID that already belongs to someone else moves the request
+to that person.
 
 ---
 
@@ -197,6 +273,7 @@ app/
 ├── main.py              FastAPI app, logging, error pages
 ├── config.py            Session times, database location
 ├── db.py                Engine, session, schema creation
+├── migrations.py        Forward-only SQLite migrations (PRAGMA user_version)
 ├── models.py            applicants, resources, booking_requests, reservations
 ├── security.py          Same-origin protection for form posts
 ├── seed.py              Initial resource setup
@@ -204,7 +281,7 @@ app/
 │   ├── booking_parser.py    Booking email -> structured fields
 │   ├── lesson_parser.py     Timetable text -> editable lesson rows
 │   ├── availability.py      Slot expansion, conflict detection, alternatives
-│   ├── booking_service.py   Save/approve/reject/cancel, lesson import, search
+│   ├── booking_service.py   Save/amend/approve/reject/cancel/reopen, lessons, search
 │   └── calendar_view.py     Resource week grid
 ├── routes/              calendar, requests, lessons, resources, search
 ├── templates/           Jinja2 (autoescaped)

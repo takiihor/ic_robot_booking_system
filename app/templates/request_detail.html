@@ -26,13 +26,31 @@
 <div class="grid grid-2" style="align-items: start;">
   <div>
     {# ---------------- Request fields ---------------- #}
-    <form class="panel" method="post" action="/requests/{{ req.id }}/update">
-      <h2>Request details</h2>
-      {% set editable = req.status == 'PENDING' %}
-      {% if not editable %}
-        <p class="muted">This request is {{ req.status }} and can no longer be edited.</p>
+    {% set amending = req.status == 'APPROVED' %}
+    {% set editable = req.status in ['PENDING', 'APPROVED'] %}
+    <form class="panel" method="post" action="/requests/{{ req.id }}/update"
+          {% if amending %}onsubmit="return confirm('Amend this approved booking? The current reservations are released and rewritten to match the new dates.')"{% endif %}>
+      <h2>{{ 'Amend booking' if amending else 'Request details' }}</h2>
+      {% if amending %}
+        <p class="muted">
+          Saving re-checks availability, releases the {{ req.reservations
+            | selectattr('status', 'equalto', 'ACTIVE') | list | length }} current
+          reservation(s) and writes new ones to match. The amendment is rejected if the
+          robot is no longer free.
+        </p>
+      {% elif not editable %}
+        <p class="muted">
+          This request is {{ req.status }}. Reopen it below to edit it — you do not need
+          to re-enter the application.
+        </p>
       {% endif %}
       <fieldset style="border:0;padding:0;margin:0" {{ 'disabled' if not editable }}>
+        {% if editable %}
+          <p class="field-note" style="color: var(--muted); margin: 0 0 10px">
+            Applicant name, department and contact details are shared — correcting them here
+            updates {{ req.applicant.name }}'s other bookings too.
+          </p>
+        {% endif %}
         <div class="grid grid-2">
           <div class="field">
             <label for="name">Applicant name</label>
@@ -85,6 +103,18 @@
               {% endfor %}
             </select>
           </div>
+          {% if amending %}
+            <div class="field">
+              <label for="assigned_resource_id">Assigned robot</label>
+              <select id="assigned_resource_id" name="assigned_resource_id">
+                {% for resource in resources %}
+                  <option value="{{ resource.id }}" {{ 'selected' if resource.id == req.assigned_resource_id }}>
+                    {{ resource.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          {% endif %}
           <div class="field">
             <label>Sessions</label>
             <div class="checks" style="padding-top: 5px;">
@@ -107,7 +137,11 @@
           <textarea id="remarks" name="remarks" rows="2">{{ req.remarks or '' }}</textarea>
         </div>
         {% if editable %}
-          <div class="actions"><button class="btn" type="submit">Save changes</button></div>
+          <div class="actions">
+            <button class="btn {{ 'btn-primary' if amending }}" type="submit">
+              {{ 'Amend booking' if amending else 'Save changes' }}
+            </button>
+          </div>
         {% endif %}
       </fieldset>
     </form>
@@ -116,6 +150,19 @@
       <h2>Record</h2>
       <dl class="kv">
         <dt>Status</dt><dd>{{ status_badge(req.status) }}</dd>
+        {% if history %}
+          <dt>Applicant history</dt>
+          <dd>
+            {% if history.total > 1 %}
+              <span class="badge badge-APPROVED">Returning</span>
+              {{ history.total - 1 }} other request(s) on record
+            {% else %}
+              <span class="badge badge-PENDING">First booking</span>
+              no other request on record
+            {% endif %}
+            · <a href="/applicants/{{ req.applicant_id }}">view all</a>
+          </dd>
+        {% endif %}
         <dt>Created</dt><dd>{{ dt(req.created_at) }}</dd>
         <dt>Updated</dt><dd>{{ dt(req.updated_at) }}</dd>
         <dt>Decided</dt><dd>{{ dt(req.decided_at) }}</dd>
@@ -126,7 +173,24 @@
         {% set active = req.reservations | selectattr('status', 'equalto', 'ACTIVE') | list %}
         <dt>Reservations</dt>
         <dd>{{ active|length }} active of {{ req.reservations|length }} total</dd>
+        {% if req.clashing_reservations %}
+          <dt>Shared days</dt>
+          <dd>{{ req.clashing_reservations|length }} session(s) share the robot — see below</dd>
+        {% endif %}
       </dl>
+      {% if req.clashing_reservations %}
+        <div class="msg msg-warn" style="margin-top: 12px">
+          <strong>Robot must be handed back on these days:</strong>
+          <ul style="margin: 6px 0 0">
+            {% for reservation in req.clashing_reservations %}
+              <li>
+                {{ reservation.start_at.strftime('%a %d %b, %H:%M') }} —
+                {{ reservation.conflict_note }}
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
       {% if req.raw_text %}
         <details class="raw" style="margin-top: 12px;">
           <summary>Original pasted email</summary>
@@ -186,6 +250,39 @@
           {% endfor %}
         </ul>
 
+        {% if blocked_periods %}
+          <h3>Dates to hand the robot back</h3>
+          <table class="data blocked-days">
+            <thead>
+              <tr><th>Unavailable</th><th>Sessions</th><th>Reason</th><th>Return by</th></tr>
+            </thead>
+            <tbody>
+              {% for period in blocked_periods %}
+                <tr>
+                  <td class="nowrap">{{ period.date_label }}</td>
+                  <td class="nowrap">{{ period.session_label or '—' }}</td>
+                  <td>{{ period.reason_label or '—' }}</td>
+                  <td class="nowrap"><strong>{{ period.return_by.strftime('%a %d %b %Y') }}</strong></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <p class="field-note" style="margin-top: 6px;">
+            The return-by date is the day before each unavailable run starts.
+          </p>
+
+          {% if unavailable_message %}
+            <h3>Message for the applicant</h3>
+            <textarea id="applicant-message" class="paste" rows="{{ 8 + blocked_periods|length * 3 }}"
+                      readonly onclick="this.select()">{{ unavailable_message }}</textarea>
+            <div class="actions">
+              <button class="btn btn-sm" type="button" onclick="copyApplicantMessage(this)">
+                Copy message
+              </button>
+            </div>
+          {% endif %}
+        {% endif %}
+
         {% if pref.status != AVAILABLE %}
           <h3>Alternative robots</h3>
           {% if report.alternatives %}
@@ -233,7 +330,40 @@
               Availability is re-checked before anything is written.
             </div>
           </div>
-          <button class="btn btn-ok" type="submit">Accept</button>
+
+          {% set clashing = report.preferred.slots | rejectattr('available') | list
+                            if report and report.preferred else [] %}
+          {% if clashing %}
+            <div class="msg msg-warn" style="margin: 0 0 12px">
+              <strong>{{ report.preferred.resource.name }} is busy for
+                {{ clashing|length }} of {{ report.preferred.slots|length }} sessions.</strong>
+              Accepting anyway still lends the robot out and flags those days on the
+              calendar, so you can ask for it back in time.
+              <ul style="margin: 6px 0 0">
+                {% for slot in clashing[:6] %}
+                  <li>{{ slot.slot.label }} — {{ slot.description }}</li>
+                {% endfor %}
+                {% if clashing|length > 6 %}
+                  <li class="muted">…and {{ clashing|length - 6 }} more.</li>
+                {% endif %}
+              </ul>
+            </div>
+            <div class="field">
+              <label for="conflict_note">Note for the flagged days (optional)</label>
+              <input type="text" id="conflict_note" name="conflict_note"
+                     placeholder="e.g. return by 09:00 on lesson days">
+            </div>
+          {% endif %}
+
+          <div class="actions" style="margin:0">
+            <button class="btn btn-ok" type="submit">Accept</button>
+            {% if clashing %}
+              <button class="btn btn-danger" type="submit" name="allow_conflicts" value="1"
+                      onclick="return confirm('Lend the robot out over {{ clashing|length }} clashing session(s)? They stay on the calendar and will be flagged.')">
+                Accept anyway ({{ clashing|length }} clash{{ 'es' if clashing|length != 1 }})
+              </button>
+            {% endif %}
+          </div>
         </form>
 
         <form method="post" action="/requests/{{ req.id }}/reject">
@@ -258,12 +388,24 @@
       </form>
     {% endif %}
 
+    {% if req.status in ['CANCELLED', 'REJECTED'] %}
+      <form class="panel" method="post" action="/requests/{{ req.id }}/reopen">
+        <h2>Reopen request</h2>
+        <p class="muted">
+          Puts this request back to Pending so it can be corrected and decided again,
+          keeping its history and Response ID. Released reservations stay cancelled —
+          approving writes fresh ones.
+        </p>
+        <button class="btn btn-primary" type="submit">Reopen as Pending</button>
+      </form>
+    {% endif %}
+
     {% if req.reservations %}
       <div class="panel">
         <h2>Reservations</h2>
         <div class="table-wrap">
           <table class="data">
-            <thead><tr><th>Robot</th><th>When</th><th>Status</th></tr></thead>
+            <thead><tr><th>Robot</th><th>When</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {% for reservation in req.reservations|sort(attribute='start_at') %}
                 <tr>
@@ -271,7 +413,22 @@
                   <td class="nowrap">
                     {{ reservation.start_at.strftime('%a %d %b, %H:%M') }}–{{ reservation.end_at.strftime('%H:%M') }}
                   </td>
-                  <td>{{ reservation.status }}</td>
+                  <td>
+                    {{ reservation.status }}
+                    {% if reservation.status == 'ACTIVE' and reservation.has_clash %}
+                      <span class="badge badge-out" title="{{ reservation.conflict_note }}">⚠ shared</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if reservation.status == 'ACTIVE' %}
+                      <form class="inline-form" method="post"
+                            action="/reservations/{{ reservation.id }}/cancel"
+                            onsubmit="return confirm('Release just this slot? The rest of the booking stays.')">
+                        <input type="hidden" name="redirect_to" value="/requests/{{ req.id }}">
+                        <button class="btn btn-sm btn-danger" type="submit">Release</button>
+                      </form>
+                    {% endif %}
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -281,4 +438,24 @@
     {% endif %}
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function copyApplicantMessage(button) {
+    const box = document.getElementById('applicant-message');
+    if (!box) return;
+    box.select();
+    const done = () => {
+      const original = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(() => { button.textContent = original; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(box.value).then(done, () => {});
+    } else if (document.execCommand('copy')) {
+      done();
+    }
+  }
+</script>
 {% endblock %}
