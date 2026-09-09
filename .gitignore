@@ -7,6 +7,9 @@ data/*.db-wal
 data/*.db-shm
 data/booking.pid
 data/booking.log
+data/queue.pid
+data/queue.log
 data.zip
 data.zip:Zone.Identifier
 docs/
+.worktrees/
