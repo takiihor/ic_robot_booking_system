@@ -181,6 +181,15 @@ If you change `deploy/booking.env`, restart the service:
 sudo systemctl restart robot-booking
 ```
 
+### OneDrive booking queue worker
+
+Set `BOOKING_QUEUE_DIR` in `deploy/booking.env` to a OneDrive-synced folder.
+The worker (`.venv/bin/python -m app.services.queue_processor`) polls it for
+incoming `booking-*.json` files: each file is parsed and auto-imported as a
+`PENDING` request, and approved immediately when the resolved robot is fully
+free. Conflicts and ambiguous facilities stay `PENDING` for staff review.
+Recent auto-imports appear in a banner on every page.
+
 ---
 
 ## Docker deployment
