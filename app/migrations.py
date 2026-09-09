@@ -14,7 +14,7 @@ from sqlalchemy import Engine
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Column list of booking_requests as of schema version 1, minus UNIQUE(response_id).
 _BOOKING_REQUESTS_V1 = """
@@ -96,9 +96,20 @@ def _add_reservation_conflict_note(cursor: sqlite3.Cursor) -> None:
     log.info("Migration 2: added reservations.conflict_note")
 
 
+def _add_auto_import_columns(cursor: sqlite3.Cursor) -> None:
+    """Migration 3 — track queue auto-imports for the web UI banner."""
+    cols = {row[1] for row in cursor.execute("PRAGMA table_info(booking_requests)").fetchall()}
+    if not cols or "auto_imported" in cols:
+        return  # fresh database, or already migrated
+    cursor.execute("ALTER TABLE booking_requests ADD COLUMN auto_imported INTEGER NOT NULL DEFAULT 0")
+    cursor.execute("ALTER TABLE booking_requests ADD COLUMN source_file VARCHAR(200)")
+    log.info("Migration 3: added booking_requests.auto_imported/source_file")
+
+
 MIGRATIONS = {
     1: _drop_response_id_unique,
     2: _add_reservation_conflict_note,
+    3: _add_auto_import_columns,
 }
 
 

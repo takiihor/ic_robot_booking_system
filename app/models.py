@@ -141,6 +141,8 @@ class BookingRequest(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=RequestStatus.PENDING)
     rejection_reason: Mapped[str | None] = mapped_column(Text)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    auto_imported: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
+    source_file: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     applicant: Mapped[Applicant] = relationship(back_populates="requests")
     preferred_resource: Mapped[Resource | None] = relationship(
