@@ -1,9 +1,10 @@
 """Automated queue processor for incoming booking JSON files.
 
 Polls a configurable directory for booking-*.json files, runs each through the
-existing parser and availability engine, and records results in a durable
-processed-file registry.  Does NOT create bookings, send notifications, or
-modify production data.
+existing parser and availability engine, and auto-imports them: a PENDING
+request is always created, and it is approved immediately when the single
+resolved robot is fully free. Conflicts, ambiguous facilities and incomplete
+parses stay PENDING for staff review. Approval never overrides a conflict.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from typing import Any
 
 from app.services.booking_parser import parse_booking_email
 from app.services import availability as av
-from app.models import Resource, ResourceStatus
+from app.models import BookingRequest, Resource, ResourceStatus
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -382,6 +383,106 @@ def process_file(file_path: Path) -> ProcessResult:
     return result
 
 
+def auto_import(file_path: Path, result: ProcessResult) -> BookingRequest | None:
+    """Create a PENDING request for a processed file; approve it iff free.
+
+    - Returns the existing live request when the Response ID is already taken
+      (idempotent — never double-books).
+    - Approves only when the file resolves to a single active robot AND the
+      availability check says AVAILABLE. Everything else stays PENDING.
+    - Never overrides a conflict (no allow_conflicts).
+    - Never raises — failures return None and are logged.
+    """
+    from app.services import booking_service as svc
+    from app.services.booking_parser import parse_booking_email as _parse
+
+    if result.status != "PROCESSED":
+        return None
+    try:
+        outer = json.loads(file_path.read_bytes())
+        parsed = _parse(outer.get("EmailBody", ""))
+    except Exception as exc:
+        log.warning("auto-import re-parse failed for %s: %s", file_path.name, exc)
+        return None
+    if not (parsed.name or "").strip():
+        return None
+    if parsed.start_date is None or not parsed.sessions:
+        return None
+
+    db = _get_session_factory()()
+    try:
+        if parsed.response_id:
+            existing = db.scalar(
+                select(BookingRequest)
+                .where(BookingRequest.response_id == parsed.response_id)
+                .where(BookingRequest.status.not_in(("CANCELLED", "REJECTED")))
+            )
+            if existing is not None:
+                return existing
+
+        preferred, candidates = resolve_facility(db, parsed.facility)
+        single = preferred or (candidates[0] if len(candidates) == 1 else None)
+        if parsed.preferred_robot:
+            p2, c2 = resolve_facility(db, parsed.preferred_robot)
+            if p2 is not None:
+                single = p2
+            elif len(c2) == 1 and single is None:
+                single = c2[0]
+
+        try:
+            req = svc.save_request(
+                db,
+                name=parsed.name,
+                sid_netid=parsed.sid_netid,
+                department=parsed.department,
+                email=parsed.email,
+                phone=parsed.phone,
+                response_id=parsed.response_id,
+                facility=parsed.facility,
+                booking_type=parsed.booking_type,
+                start_date=parsed.start_date,
+                end_date=parsed.end_date or parsed.start_date,
+                sessions=list(parsed.sessions),
+                preferred_resource_id=single.id if single is not None else None,
+                purpose=parsed.purpose,
+                remarks=parsed.remarks,
+                raw_text=parsed.raw_text or outer.get("EmailBody", ""),
+            )
+        except svc.ValidationError as exc:
+            db.rollback()
+            log.warning("auto-import validation failed for %s: %s", file_path.name, exc)
+            return None
+
+        req.auto_imported = True
+        req.source_file = file_path.name
+        db.flush()
+
+        if single is not None and result.availability == "AVAILABLE":
+            try:
+                with db.begin_nested():
+                    svc.approve_request(db, req, single.id)
+            except svc.ValidationError as exc:
+                log.info("auto-import %s stays pending: %s", file_path.name, exc)
+            except Exception:
+                log.exception("auto-import approval failed for %s", file_path.name)
+
+        # Touch lazy state before the session closes so the caller can read
+        # status/reservations without a DetachedInstanceError.
+        _ = (req.id, req.status, req.response_id)
+        _ = list(req.reservations)
+        db.commit()
+        return req
+    except Exception:
+        try:
+            db.rollback()
+        finally:
+            pass
+        log.exception("auto-import failed for %s", file_path.name)
+        return None
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Polling loop
 # ---------------------------------------------------------------------------
@@ -418,6 +519,10 @@ def scan_queue(queue: Path, registry: _Registry) -> list[ProcessResult]:
 
         log.info("Processing %s", entry.name)
         result = process_file(entry)
+        try:
+            auto_import(entry, result)
+        except Exception:
+            log.exception("Auto-import failed for %s", entry.name)
         registry.mark(entry, content_hash)
         results.append(result)
 
