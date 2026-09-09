@@ -25,6 +25,7 @@
 </header>
 
 <main>
+  {% include "_queue_banner.html" %}
   {% if flash %}
     <div class="msg msg-{{ flash_level or 'ok' }}">{{ flash }}</div>
   {% endif %}

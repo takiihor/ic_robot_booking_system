@@ -1,0 +1,26 @@
+{% if queue_banner and queue_banner.total %}
+<div class="msg msg-ok" id="queue-banner" data-latest="{{ queue_banner.latest_at or '' }}">
+  <strong>{{ queue_banner.total }} incoming msg{{ 's' if queue_banner.total != 1 }} handled</strong>
+  — {{ queue_banner.auto_approved }} auto-added to calendar,
+  {{ queue_banner.needs_review }} need{{ 's' if queue_banner.needs_review == 1 else '' }} review.
+  <a href="/requests">View Requests</a>
+  <button class="btn btn-sm" type="button" onclick="dismissQueueBanner()">Dismiss</button>
+</div>
+<script>
+function dismissQueueBanner() {
+  try {
+    var el = document.getElementById('queue-banner');
+    localStorage.setItem('queue_banner_dismissed_at', (el && el.dataset.latest) || new Date().toISOString());
+    if (el) el.remove();
+  } catch (e) {}
+}
+(function () {
+  try {
+    var el = document.getElementById('queue-banner');
+    if (!el) return;
+    var dismissed = localStorage.getItem('queue_banner_dismissed_at');
+    if (dismissed && el.dataset.latest && el.dataset.latest <= dismissed) el.remove();
+  } catch (e) {}
+})();
+</script>
+{% endif %}

@@ -137,3 +137,36 @@ def test_get_queue_banner_counts_recent(tmp_path, db, robots):
     assert banner["needs_review"] == 1
     assert banner["latest_at"] is not None
     assert len(banner["items"]) == 2
+
+
+def _seed_banner_request(client, status="APPROVED"):
+    from datetime import date
+    from app.models import Applicant, BookingRequest
+    db = client.db_factory()
+    try:
+        ap = Applicant(name="Banner Test", sid_netid="banner001")
+        db.add(ap)
+        db.flush()
+        req = BookingRequest(applicant_id=ap.id, start_date=date(2026, 10, 1),
+                             end_date=date(2026, 10, 1), status=status,
+                             auto_imported=True, source_file="booking-banner.json")
+        req.sessions = ["PM"]
+        db.add(req)
+        db.commit()
+        return req.id
+    finally:
+        db.close()
+
+
+def test_calendar_shows_banner_when_recent_imports(client):
+    _seed_banner_request(client)
+    resp = client.get("/calendar")
+    assert resp.status_code == 200
+    assert b"queue-banner" in resp.content
+    assert b"incoming" in resp.content
+
+
+def test_no_banner_when_empty(client):
+    resp = client.get("/calendar")
+    assert resp.status_code == 200
+    assert b"queue-banner" not in resp.content
