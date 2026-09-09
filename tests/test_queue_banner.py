@@ -109,3 +109,31 @@ def test_auto_import_ambiguous_facility_stays_pending(tmp_path, db, robots, monk
     assert req is not None
     assert req.status == "PENDING"
     assert len(req.reservations) == 0
+
+
+def test_get_queue_banner_empty(db):
+    from app.routes.common import get_queue_banner
+    banner = get_queue_banner(db)
+    assert banner["total"] == 0
+    assert banner["items"] == []
+
+
+def test_get_queue_banner_counts_recent(tmp_path, db, robots):
+    from app.routes.common import get_queue_banner
+    from app.services import queue_processor as qp
+    p1 = _write(tmp_path, "booking-201.json", {"EmailBody": GOOD_EMAIL})
+    req1 = qp.auto_import(p1, qp.process_file(p1))
+    assert req1.status == "APPROVED"
+    email2 = (GOOD_EMAIL.replace("AUTO-001", "AUTO-202")
+              .replace("99999999x", "77777777z"))
+    p2 = _write(tmp_path, "booking-202.json", {"EmailBody": email2})
+    # Force the second one pending by pre-booking is complex; instead flip it.
+    req2 = qp.auto_import(p2, qp.process_file(p2))
+    req2.status = "PENDING"
+    db.flush()
+    banner = get_queue_banner(db)
+    assert banner["total"] == 2
+    assert banner["auto_approved"] == 1
+    assert banner["needs_review"] == 1
+    assert banner["latest_at"] is not None
+    assert len(banner["items"]) == 2

@@ -1,14 +1,16 @@
 """Shared template setup and small form helpers used by every route module."""
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.config import SESSION_LABELS, SESSION_ORDER
-from app.models import RequestStatus, ResourceStatus, SourceType
+from app.models import BookingRequest, RequestStatus, ResourceStatus, SourceType
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -27,7 +29,54 @@ def render(request: Request, name: str, context: dict) -> object:
     context.setdefault("q", request.query_params.get("q", ""))
     context.setdefault("flash", request.query_params.get("flash"))
     context.setdefault("flash_level", request.query_params.get("level", "ok"))
+    if "queue_banner" not in context:
+        try:
+            from app.db import SessionLocal
+            _db = SessionLocal()
+            try:
+                context["queue_banner"] = get_queue_banner(_db)
+            finally:
+                _db.close()
+        except Exception:
+            context["queue_banner"] = {"total": 0, "auto_approved": 0,
+                                       "needs_review": 0, "items": [], "latest_at": None}
     return templates.TemplateResponse(request, name, context)
+
+
+def get_queue_banner(db: Session | None, hours: int = 24) -> dict:
+    """Recent queue auto-imports for the global banner.
+
+    Returns {total, auto_approved, needs_review, items, latest_at} where items
+    holds at most 3 {id, applicant, status, start, end} dicts, newest first.
+    Never raises — a broken banner must not break the page.
+    """
+    empty = {"total": 0, "auto_approved": 0, "needs_review": 0,
+             "items": [], "latest_at": None}
+    if db is None:
+        return empty
+    try:
+        cutoff = datetime.now() - timedelta(hours=hours)
+        rows = list(db.scalars(
+            select(BookingRequest)
+            .where(BookingRequest.auto_imported == True)  # noqa: E712
+            .where(BookingRequest.created_at >= cutoff)
+            .order_by(BookingRequest.created_at.desc())
+            .limit(10)
+        ))
+    except Exception:
+        return empty
+    approved = [r for r in rows if r.status == RequestStatus.APPROVED]
+    items = [
+        {"id": r.id,
+         "applicant": r.applicant.name if r.applicant else "Unknown",
+         "status": r.status,
+         "start": r.start_date.isoformat(),
+         "end": r.end_date.isoformat()}
+        for r in rows[:3]
+    ]
+    return {"total": len(rows), "auto_approved": len(approved),
+            "needs_review": len(rows) - len(approved), "items": items,
+            "latest_at": rows[0].created_at.isoformat() if rows else None}
 
 
 def form_str(form, key: str) -> str | None:
