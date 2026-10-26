@@ -1,0 +1,63 @@
+# Robot Resource Booking System — OneDrive booking queue worker.
+#
+# Polls BOOKING_QUEUE_DIR for booking-*.json files and runs each through the
+# existing parser and availability engine. Independent from the web app:
+# either service can be restarted without touching the other.
+#
+#   sudo ./deploy/install-systemd-service.sh
+#   sudo systemctl enable --now robot-booking-queue
+#   systemctl status robot-booking-queue
+#   journalctl -u robot-booking-queue -f
+#
+# Queue settings come from deploy/booking.env — edit that file, then:
+#   sudo systemctl restart robot-booking-queue
+#
+# NOTE: BOOKING_QUEUE_DIR may contain spaces (e.g. a OneDrive path). That is
+# fine here: EnvironmentFile passes the whole post-= value through, and
+# ExecStart below takes no path arguments, so no shell quoting is involved.
+
+[Unit]
+Description=Robot Booking OneDrive Queue Worker
+Documentation=file:__BOOKING_APP_DIR__/README.md
+After=network-online.target local-fs.target
+Wants=network-online.target
+# Never stop trying to restart on failure, however often it crashes.
+StartLimitIntervalSec=0
+# The web app is independent: the worker only reads the booking database,
+# never writes production records, so no ordering dependency is required.
+
+[Service]
+Type=simple
+User=__BOOKING_USER__
+Group=__BOOKING_GROUP__
+WorkingDirectory=__BOOKING_APP_DIR__
+EnvironmentFile=__BOOKING_APP_DIR__/deploy/booking.env
+
+# No arguments: the module's default entry point is the continuous
+# polling loop (run_loop), reading BOOKING_QUEUE_DIR and
+# BOOKING_QUEUE_POLL_SECONDS from the environment above.
+ExecStart=__BOOKING_APP_DIR__/.venv/bin/python -m app.services.queue_processor
+
+# Restart on crash, but stay stopped on a clean exit (exit 0 means the
+# worker is disabled via an empty BOOKING_QUEUE_DIR — retrying would loop).
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=robot-booking-queue
+
+# No filesystem hardening here on purpose: BOOKING_QUEUE_DIR is
+# user-configurable and typically lives outside the app directory
+# (e.g. a OneDrive sync folder under /mnt/c with spaces in its path),
+# and the worker must both read new files and write processed.json there.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

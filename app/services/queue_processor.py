@@ -549,12 +549,17 @@ def run_once(queue: Path | None = None) -> list[ProcessResult]:
     return scan_queue(q, registry)
 
 
-def run_loop() -> None:
-    """Continuous polling loop — call from a background thread or script."""
+def run_loop() -> int:
+    """Continuous polling loop — call from a background thread or script.
+
+    Returns 0 without polling when the worker is disabled (empty
+    BOOKING_QUEUE_DIR) so a supervisor can stay stopped instead of
+    restart-looping. Any other return path is an unexpected failure.
+    """
     q = queue_dir()
     if q is None:
         log.error("BOOKING_QUEUE_DIR not set — cannot start queue processor")
-        return
+        return 0
     log.info("Queue processor started: polling %s every %.0fs", q, poll_interval())
     registry = _Registry(q / _REGISTRY)
     while True:
@@ -577,7 +582,8 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
-    # Allow one-shot mode: python -m app.services.queue_processor --once
+    # Continuous mode (default): python -m app.services.queue_processor
+    # Exits 0 when disabled, non-zero only on unexpected failure.
     if "--once" in sys.argv:
         results = run_once()
         for r in results:
@@ -585,4 +591,4 @@ if __name__ == "__main__":
         if not results:
             print("No new files to process.")
     else:
-        run_loop()
+        raise SystemExit(run_loop())

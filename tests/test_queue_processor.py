@@ -309,6 +309,19 @@ class TestRunOnce:
 
 
 # ---------------------------------------------------------------------------
+# Tests: run_loop entry point
+# ---------------------------------------------------------------------------
+
+class TestRunLoop:
+    def test_disabled_returns_zero_without_polling(self, monkeypatch):
+        """Empty BOOKING_QUEUE_DIR must exit 0 so supervisors stay stopped."""
+        from app.services.queue_processor import run_loop
+
+        monkeypatch.delenv("BOOKING_QUEUE_DIR", raising=False)
+        assert run_loop() == 0
+
+
+# ---------------------------------------------------------------------------
 # Tests: facility resolution
 # ---------------------------------------------------------------------------
 

@@ -183,12 +183,30 @@ sudo systemctl restart robot-booking
 
 ### OneDrive booking queue worker
 
-Set `BOOKING_QUEUE_DIR` in `deploy/booking.env` to a OneDrive-synced folder.
-The worker (`.venv/bin/python -m app.services.queue_processor`) polls it for
-incoming `booking-*.json` files: each file is parsed and auto-imported as a
-`PENDING` request, and approved immediately when the resolved robot is fully
-free. Conflicts and ambiguous facilities stay `PENDING` for staff review.
-Recent auto-imports appear in a banner on every page.
+A separate service polls `BOOKING_QUEUE_DIR` for incoming `booking-*.json`
+files and runs each through the parser and availability check. Each file is
+auto-imported as a `PENDING` request, and approved immediately when the
+resolved robot is fully free. Conflicts and ambiguous facilities stay
+`PENDING` for staff review — approval never overrides a conflict. Recent
+auto-imports appear in a banner on every page. The worker never sends
+notifications.
+
+```bash
+sudo ./deploy/install-systemd-service.sh
+sudo systemctl enable --now robot-booking-queue
+```
+
+Check it with `systemctl status robot-booking-queue` and
+`journalctl -u robot-booking-queue -f`.
+
+Without systemd (e.g. plain WSL), use `./start-queue.sh` and `./stop-queue.sh`
+instead. Configure the queue in `deploy/booking.env`:
+
+| Variable | Purpose |
+|---|---|
+| `BOOKING_QUEUE_DIR` | OneDrive-synced folder to poll (empty disables the worker) |
+| `BOOKING_QUEUE_POLL_SECONDS` | Seconds between polls (default `10`) |
+| `BOOKING_FACILITY_MAP` | JSON mapping facility names to resource groups |
 
 ---
 
