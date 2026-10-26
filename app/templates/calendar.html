@@ -94,9 +94,10 @@
                 {% for reservation in cell.reservations %}
                   <button type="button"
                           class="ev ev-{{ reservation.source_type }} {{ 'ev-clash' if reservation.has_clash }}"
+                          style="--c:{{ reservation.display_color_var or reservation.color_var }}"
                           onclick="openReservation({{ reservation.id }})"
                           title="{{ reservation.title }} — {{ reservation.type_label }}{% if reservation.has_clash %} · {{ reservation.conflict_note }}{% endif %}">
-                    <strong>{% if reservation.has_clash %}⚠ {% endif %}{{ reservation.title }}</strong>
+                    <strong style="color:{{ reservation.display_text_hex or reservation.text_hex }}">{% if reservation.has_clash %}⚠ {% endif %}{{ reservation.title }}</strong>
                     <span>{{ reservation.short_label }}</span>
                   </button>
                 {% endfor %}
@@ -110,11 +111,17 @@
 </div>
 
 <div class="legend">
-  <span><span class="swatch" style="background:var(--booking-bg);border-color:var(--booking-border)"></span>Research / booking</span>
+  <span><span class="swatch" style="background:linear-gradient(135deg,var(--sky),var(--rose),var(--amber),var(--emerald));border-color:var(--hair2)"></span>Research (color = borrower)</span>
   <span><span class="swatch" style="background:var(--lesson-bg);border-color:var(--lesson-border)"></span>Lesson</span>
   <span><span class="swatch" style="background:var(--maint-bg);border-color:var(--maint-border)"></span>Maintenance</span>
   <span><span class="swatch" style="background:var(--block-bg);border-color:var(--block-border)"></span>Out of service / block</span>
   <span><span class="swatch ev-clash" style="background:var(--warn-bg)"></span>⚠ shared session</span>
+  {% if borrower_legend %}
+    <span class="muted" style="border:0;background:none;padding-left:4px;">Borrowers:</span>
+    {% for borrower in borrower_legend %}
+      <span><span class="swatch" style="background:{{ borrower.color_hex }}26;background:color-mix(in srgb, {{ borrower.color }} 30%, #fff);border-color:{{ borrower.color }}"></span><b style="color:{{ borrower.text_hex or borrower.color_hex }}">{{ borrower.label }}</b></span>
+    {% endfor %}
+  {% endif %}
   <span class="muted">· AM 08:30–12:00 · PM 13:30–17:00</span>
 </div>
 {% endif %}
@@ -197,7 +204,8 @@
     detailBody.innerHTML = 'Loading…';
     detailModal.hidden = false;
     try {
-      const response = await fetch(`/reservations/${id}/detail`);
+      const weekDate = "{{ selected_date }}";
+      const response = await fetch(`/reservations/${id}/detail?date=${encodeURIComponent(weekDate)}`);
       detailBody.innerHTML = response.ok
         ? await response.text()
         : '<p class="msg msg-err">Could not load these details.</p>';

@@ -6,6 +6,7 @@ conflict engine (bookings, lessons, maintenance and blocks all live here).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date, datetime, timezone
 
@@ -81,6 +82,110 @@ class ReservationStatus:
     CANCELLED = "CANCELLED"
 
 
+# --- borrower highlight colors (Design.md §2.2 curated palette) ---
+# Each borrower (applicant) maps deterministically to one palette entry, so the
+# same person is always the same color on every page and week. Color is always
+# paired with the borrower name — never the only signal.
+BORROWER_PALETTE = (
+    "sky",
+    "cobalt",
+    "teal",
+    "emerald",
+    "amber",
+    "coral",
+    "rose",
+    "fuchsia",
+    "lavender",
+    "violet",
+    "sunflower",
+    "mint",
+)
+
+
+def borrower_color_name(key: str) -> str:
+    """Stable palette entry for a borrower key (e.g. ``"applicant:3"``)."""
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return BORROWER_PALETTE[int(digest, 16) % len(BORROWER_PALETTE)]
+
+
+# Deep, text-safe tone per palette entry: readable borrower name colors on a
+# white background WITHOUT relying on color-mix(), so the identity survives
+# in every browser (background tints are progressive enhancement on top).
+BORROWER_TEXT_HEX = {
+    "sky": "#2F6FBD",
+    "cobalt": "#2F4BC4",
+    "teal": "#0E7C74",
+    "emerald": "#1B7A4C",
+    "amber": "#96590F",
+    "coral": "#BE4133",
+    "rose": "#BE2B60",
+    "fuchsia": "#963DA0",
+    "lavender": "#5C51C6",
+    "violet": "#553BC0",
+    "sunflower": "#8F6E0E",
+    "mint": "#1C8457",
+}
+
+# Flat text tones for non-booking event types (mirror of the type tints).
+TYPE_TEXT_HEX = {
+    SourceType.LESSON: "#553BC0",
+    SourceType.MAINTENANCE: "#96590F",
+    SourceType.BLOCK: "#4A5158",
+}
+
+
+def borrower_text_hex(key: str) -> str:
+    """Stable readable text color for a borrower key."""
+    return BORROWER_TEXT_HEX[borrower_color_name(key)]
+
+
+def distinct_borrower_names(keys) -> dict[str, str]:
+    """Assign distinct palette entries to the given borrower keys.
+
+    The global :func:`borrower_color_name` hashes into 12 slots, so two
+    different borrowers routinely collide (e.g. ``applicant:14`` and
+    ``applicant:20`` are both ``teal``) and appear identical in the UI.
+    This resolves the visible set to distinct entries (up to the palette
+    size) via hash-preference + linear probing, so borrowers shown together
+    always get different text colors. Deterministic for a given key set.
+    """
+    uniq = sorted(set(keys))
+    if not uniq:
+        return {}
+    prefs: list[tuple[int, str]] = []
+    for key in uniq:
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        prefs.append((int(digest, 16) % len(BORROWER_PALETTE), key))
+    # Serve most-constrained first for stability: sorted by preferred slot.
+    prefs.sort()
+    resolved: dict[str, str] = {}
+    used: set[str] = set()
+    for pref, key in prefs:
+        idx = pref
+        for _ in range(len(BORROWER_PALETTE)):
+            name = BORROWER_PALETTE[idx]
+            if name not in used:
+                resolved[key] = name
+                used.add(name)
+                break
+            idx = (idx + 1) % len(BORROWER_PALETTE)
+        else:  # pragma: no cover — palette exhausted (>12 visible borrowers)
+            resolved[key] = BORROWER_PALETTE[pref]
+    return resolved
+
+
+def distinct_borrower_styles(keys) -> dict[str, dict[str, str]]:
+    """Mapping ``key -> {color_var, text_hex}`` with distinct entries."""
+    return {
+        key: {
+            "color_var": f"var(--{name})",
+            "text_hex": BORROWER_TEXT_HEX[name],
+            "color_name": name,
+        }
+        for key, name in distinct_borrower_names(keys).items()
+    }
+
+
 class Applicant(TimestampMixin, Base):
     __tablename__ = "applicants"
 
@@ -94,6 +199,24 @@ class Applicant(TimestampMixin, Base):
     requests: Mapped[list["BookingRequest"]] = relationship(
         back_populates="applicant", order_by="BookingRequest.start_date"
     )
+
+    @property
+    def color_name(self) -> str:
+        """Palette entry identifying this borrower (stable across pages)."""
+        if self.id is not None:
+            return borrower_color_name(f"applicant:{self.id}")
+        return borrower_color_name(f"name:{(self.name or '').strip().lower()}")
+
+    @property
+    def color_var(self) -> str:
+        return f"var(--{self.color_name})"
+
+    @property
+    def text_hex(self) -> str:
+        """Readable borrower name color (plain hex, no color-mix needed)."""
+        if self.id is not None:
+            return borrower_text_hex(f"applicant:{self.id}")
+        return borrower_text_hex(f"name:{(self.name or '').strip().lower()}")
 
 
 class Resource(TimestampMixin, Base):
@@ -214,6 +337,49 @@ class Reservation(TimestampMixin, Base):
     @property
     def has_clash(self) -> bool:
         return bool(self.conflict_note)
+
+    @property
+    def borrower_key(self) -> str | None:
+        """Stable identity key for borrower coloring (BOOKING only)."""
+        if self.source_type != SourceType.BOOKING:
+            return None
+        request = self.booking_request
+        if request is not None:
+            if request.applicant_id is not None:
+                return f"applicant:{request.applicant_id}"
+            try:
+                name = request.applicant.name
+            except Exception:  # detached / missing applicant
+                name = ""
+            if name:
+                return f"name:{name.strip().lower()}"
+        return f"title:{(self.title or '').strip().lower()}"
+
+    @property
+    def color_var(self) -> str:
+        """CSS color for highlighting this event.
+
+        BOOKING events take the borrower's color; other types keep their
+        type color so the event kind stays recognizable.
+        """
+        if self.source_type == SourceType.BOOKING:
+            return f"var(--{borrower_color_name(self.borrower_key or 'title:')})"
+        if self.source_type == SourceType.LESSON:
+            return "var(--c-lesson)"
+        if self.source_type == SourceType.MAINTENANCE:
+            return "var(--c-maint)"
+        return "var(--c-block)"
+
+    @property
+    def text_hex(self) -> str:
+        """Readable event-title color (plain hex, works without color-mix).
+
+        BOOKING events take the borrower's text tone; other types keep their
+        type tone so the event kind stays recognizable.
+        """
+        if self.source_type == SourceType.BOOKING:
+            return borrower_text_hex(self.borrower_key or "title:")
+        return TYPE_TEXT_HEX.get(self.source_type, "#4A5158")
 
 
 Index("ix_reservations_lookup", Reservation.resource_id, Reservation.start_at, Reservation.end_at)

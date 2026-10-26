@@ -166,6 +166,59 @@ def test_calendar_shows_banner_when_recent_imports(client):
     assert b"incoming" in resp.content
 
 
+def _seed_old_banner_request(client, days=7, status="APPROVED"):
+    from datetime import date, timedelta
+    from app.models import Applicant, BookingRequest, utcnow
+    db = client.db_factory()
+    try:
+        ap = Applicant(name="Banner Test", sid_netid="banner002")
+        db.add(ap)
+        db.flush()
+        req = BookingRequest(applicant_id=ap.id, start_date=date(2026, 10, 1),
+                             end_date=date(2026, 10, 1), status=status,
+                             auto_imported=True, source_file="booking-banner.json")
+        req.sessions = ["PM"]
+        req.created_at = utcnow() - timedelta(days=days)
+        db.add(req)
+        db.commit()
+        return req.id
+    finally:
+        db.close()
+
+
+def test_get_queue_banner_includes_old_imports(db):
+    """Imports older than 24h must still be counted — the banner is dismissal-driven,
+    so staff who check later still see what was handled."""
+    from datetime import date, timedelta
+    from app.models import Applicant, BookingRequest, utcnow
+    from app.routes.common import get_queue_banner
+
+    ap = Applicant(name="Old Import", sid_netid="old001")
+    db.add(ap)
+    db.flush()
+    req = BookingRequest(applicant_id=ap.id, start_date=date(2026, 10, 1),
+                         end_date=date(2026, 10, 1), status="APPROVED",
+                         auto_imported=True, source_file="booking-old.json")
+    req.sessions = ["PM"]
+    req.created_at = utcnow() - timedelta(days=7)
+    db.add(req)
+    db.commit()
+
+    banner = get_queue_banner(db)
+    assert banner["total"] == 1
+    assert banner["auto_approved"] == 1
+    assert banner["latest_at"] == req.created_at.isoformat()
+
+
+def test_calendar_shows_banner_for_old_import(client):
+    """A week-old import must still show the banner (no silent 24h auto-hide)."""
+    _seed_old_banner_request(client)
+    resp = client.get("/calendar")
+    assert resp.status_code == 200
+    assert b"queue-banner" in resp.content
+    assert b"incoming" in resp.content
+
+
 def test_no_banner_when_empty(client):
     resp = client.get("/calendar")
     assert resp.status_code == 200

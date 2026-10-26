@@ -17,6 +17,7 @@ from app.models import (
     RequestStatus,
     Resource,
     ResourceStatus,
+    distinct_borrower_styles,
 )
 from app.routes.common import (
     form_date,
@@ -127,6 +128,23 @@ def list_requests(request: Request, db: Session = Depends(get_db)):
         pass
 
     rows = list(db.scalars(stmt.order_by(BookingRequest.updated_at.desc())))
+    # Distinct borrower colors within this page so different applicants never
+    # share the same name color in the list.
+    page_keys = [f"applicant:{r.applicant_id}" for r in rows if r.applicant_id is not None]
+    page_styles = distinct_borrower_styles(page_keys)
+    for r in rows:
+        key = f"applicant:{r.applicant_id}" if r.applicant_id is not None else ""
+        style = page_styles.get(key)
+        applicant = r.applicant
+        try:
+            if style:
+                applicant.display_color_var = style["color_var"]  # type: ignore[attr-defined]
+                applicant.display_text_hex = style["text_hex"]  # type: ignore[attr-defined]
+            else:
+                applicant.display_color_var = applicant.color_var  # type: ignore[attr-defined]
+                applicant.display_text_hex = applicant.text_hex  # type: ignore[attr-defined]
+        except Exception:
+            pass
     return render(
         request,
         "requests_list.html",

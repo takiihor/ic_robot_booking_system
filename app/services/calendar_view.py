@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import SESSION_ORDER
-from app.models import Reservation, ReservationStatus, Resource, ResourceStatus
+from app.models import BookingRequest, Reservation, ReservationStatus, Resource, ResourceStatus
 
 # Boundary between the AM and PM display buckets.
 BUCKET_SPLIT = time(12, 45)
@@ -88,7 +88,7 @@ def build_week_grid(
 
     stmt = (
         select(Reservation)
-        .options(selectinload(Reservation.booking_request))
+        .options(selectinload(Reservation.booking_request).selectinload(BookingRequest.applicant))
         .where(Reservation.status == ReservationStatus.ACTIVE)
         .where(Reservation.start_at < window_end)
         .where(Reservation.end_at > window_start)

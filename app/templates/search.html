@@ -26,7 +26,7 @@
           <tbody>
             {% for applicant in applicants %}
               <tr class="clickable" onclick="location.href='/applicants/{{ applicant.id }}'">
-                <td><strong>{{ applicant.name }}</strong></td>
+                <td><strong><span class="who-dot" style="--c:{{ applicant.display_color_var or applicant.color_var }}"></span><span style="color:{{ applicant.display_text_hex or applicant.text_hex }}">{{ applicant.name }}</span></strong></td>
                 <td class="mono">{{ applicant.sid_netid or '—' }}</td>
                 <td>{{ applicant.department or '—' }}</td>
                 <td>{{ applicant.email or '—' }}</td>
@@ -52,7 +52,7 @@
             {% for req in requests %}
               <tr class="clickable" onclick="location.href='/requests/{{ req.id }}'">
                 <td class="mono">#{{ req.id }}</td>
-                <td>{{ req.applicant.name }}</td>
+                <td><span class="who-dot" style="--c:{{ req.applicant.display_color_var or req.applicant.color_var }}"></span><span style="color:{{ req.applicant.display_text_hex or req.applicant.text_hex }}">{{ req.applicant.name }}</span></td>
                 <td class="nowrap">{{ req.start_date.strftime('%d %b %Y') }}</td>
                 <td class="nowrap">{{ req.end_date.strftime('%d %b %Y') }}</td>
                 <td>{{ (req.assigned_resource or req.preferred_resource).name if (req.assigned_resource or req.preferred_resource) else '—' }}</td>

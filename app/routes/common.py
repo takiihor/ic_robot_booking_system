@@ -1,7 +1,7 @@
 """Shared template setup and small form helpers used by every route module."""
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from pathlib import Path
 
 from fastapi import Request
@@ -43,11 +43,17 @@ def render(request: Request, name: str, context: dict) -> object:
     return templates.TemplateResponse(request, name, context)
 
 
-def get_queue_banner(db: Session | None, hours: int = 24) -> dict:
-    """Recent queue auto-imports for the global banner.
+def get_queue_banner(db: Session | None) -> dict:
+    """Queue auto-imports for the global banner.
 
     Returns {total, auto_approved, needs_review, items, latest_at} where items
     holds at most 3 {id, applicant, status, start, end} dicts, newest first.
+
+    The banner is dismissal-driven (not time-windowed): it reflects every
+    auto-import that has not been dismissed in the browser, so staff who check
+    the site later still see what was handled. Hiding happens in the template
+    via localStorage (see _queue_banner.html), keyed on latest_at.
+
     Never raises — a broken banner must not break the page.
     """
     empty = {"total": 0, "auto_approved": 0, "needs_review": 0,
@@ -55,11 +61,9 @@ def get_queue_banner(db: Session | None, hours: int = 24) -> dict:
     if db is None:
         return empty
     try:
-        cutoff = datetime.now() - timedelta(hours=hours)
         rows = list(db.scalars(
             select(BookingRequest)
             .where(BookingRequest.auto_imported == True)  # noqa: E712
-            .where(BookingRequest.created_at >= cutoff)
             .order_by(BookingRequest.created_at.desc())
             .limit(10)
         ))

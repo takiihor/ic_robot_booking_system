@@ -52,7 +52,7 @@
           {% for req in requests %}
             <tr class="clickable" onclick="location.href='/requests/{{ req.id }}'">
               <td class="mono">#{{ req.id }}</td>
-              <td><strong>{{ req.applicant.name }}</strong></td>
+              <td><strong><span class="who-dot" style="--c:{{ req.applicant.display_color_var or req.applicant.color_var }}"></span><span style="color:{{ req.applicant.display_text_hex or req.applicant.text_hex }}">{{ req.applicant.name }}</span></strong></td>
               <td class="mono">{{ req.applicant.sid_netid or '—' }}</td>
               <td>{{ req.applicant.department or '—' }}</td>
               <td class="nowrap">{{ req.start_date.strftime('%d %b %Y') }}</td>

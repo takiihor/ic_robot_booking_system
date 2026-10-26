@@ -10,7 +10,7 @@
 {% if req %}
   {# SPEC 8.4 — full booking detail #}
   <dl class="kv">
-    <dt>Applicant</dt><dd>{{ req.applicant.name }}</dd>
+    <dt>Applicant</dt><dd><span class="who-dot" style="--c:{{ display_color_var or reservation.color_var }}"></span><span style="color:{{ display_text_hex or reservation.text_hex }};font-weight:700;">{{ req.applicant.name }}</span></dd>
     <dt>SID / NetID</dt><dd>{{ req.applicant.sid_netid or '—' }}</dd>
     <dt>Department</dt><dd>{{ req.applicant.department or '—' }}</dd>
     <dt>Email</dt><dd>{{ req.applicant.email or '—' }}</dd>

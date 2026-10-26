@@ -32,7 +32,7 @@
 
 {% block content %}
 <div class="panel-head">
-  <h1>{{ applicant.name }}</h1>
+  <h1><span class="who-dot who-dot-lg" style="--c:{{ applicant.color_var }}"></span><span style="color:{{ applicant.text_hex }}">{{ applicant.name }}</span></h1>
   <a class="btn" href="/search?q={{ applicant.sid_netid or applicant.name }}">← Back to search</a>
 </div>
 
